@@ -1,6 +1,9 @@
-# Assignment 1
+# Assignment 2
 
-The list topics covered in this asssignments are below
-- Data Expolration
-- Data Transformation
-- Outlier Detection 
+The topics covered in this asssignments are below
+
+- Over Fitting
+- Model Tuning
+- Data Sampling
+- Resampling
+- Model Selection
