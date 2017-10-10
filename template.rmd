@@ -1,0 +1,442 @@
+---
+title: "Assignment 2"
+author: "Nishanth Gandhidoss"
+date: "10/04/2017"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+
+```{r installing necessary packages, include=FALSE}
+# installing the packages
+installNewPackage <- function(packageName) {
+        if(packageName  %in% rownames(installed.packages()) == FALSE)
+        {
+                install.packages(packageName, repos = "http://cran.us.r-project.org", dependencies=TRUE)
+        }
+}
+
+
+```
+
+
+## Question 1 
+
+### Section (a)
+
+
+```{r Question1(a), message=FALSE}
+
+```
+
+
+## Section (b)
+
+
+```{r Question1(b)}
+
+```
+
+
+### Section (c)
+
+
+```{r Question1(c), include=FALSE}
+
+```
+
+
+## Question 2 
+
+## Section (a)
+
+```{r Question2(a)}
+
+```
+
+
+### Section (b)
+
+
+```{r Question2(b)}
+
+```
+
+The missmap shows missing values in the dataset in white and observed values in red. The columm from lodging to leaf.halo are most likely to missing in the dataset. 
+
+```{r Question2(b)ii}
+
+```
+
+
+### Section (c)
+
+
+```{r Question2(c), include=FALSE}
+
+```
+
+
+## Question 3 
+
+### Section (a)
+
+
+```{r Question3(a)}
+
+```
+
+
+### Section (b)
+
+```{r Question3(b), include=FALSE}
+
+```
+
+
+### Section (c)
+
+
+```{r Question3(c)}
+# Plot the correlation plot 
+corrplot(cor(bbbDescr), order="hclust", tl.cex = 0.01)
+```
+
+
+*** End of Solution ***
+
+### Appendix - Coding
+
+\# Installing the packages
+
+installNewPackage <- function(packageName) {
+
+        if(packageName  %in% rownames(installed.packages()) == FALSE)
+
+        {
+
+                install.packages(packageName, repos = "http://cran.us.r-project.org", dependencies=TRUE)
+
+        }
+
+}
+
+installNewPackage("ggplot2")
+
+installNewPackage("lattice")
+
+installNewPackage("mlbench")
+
+installNewPackage("caret")
+
+installNewPackage("grid")
+
+installNewPackage("gridExtra")
+
+installNewPackage("reshape2")
+
+installNewPackage("e1071")
+
+installNewPackage("plyr")
+
+installNewPackage("corrplot")
+
+installNewPackage("Amelia")
+
+installNewPackage("reshape2")
+
+installNewPackage("mice")
+
+library(ggplot2)
+
+library(lattice)
+
+library(mlbench)
+
+library(caret)
+
+library(grid)
+
+library(gridExtra)
+
+library(reshape2)
+
+library(e1071)
+
+library(plyr)
+
+library(corrplot)
+
+library(Amelia)
+
+library(reshape2)
+
+library(mice)
+
+#### Question 1
+
+\# Getting the data
+
+data(Glass)
+
+\# Get the Predictors alone 
+
+pred <- Glass[,-10]
+
+\# Custom histogram function
+
+gg_histogram <- function(col_name) {
+
+    ggplot(data = pred, aes(pred[col_name])) + ggtitle(col_name) + xlab(col_name) +
+
+        theme(plot.title = element_text(hjust = 0.5)) + geom_histogram(bins = 40)
+
+}
+
+\# Calling the user defined function
+
+RI_hist <- gg_histogram("RI")
+
+Na_hist <- gg_histogram("Na")
+
+Mg_hist <- gg_histogram("Mg")
+
+Al_hist <- gg_histogram("Al")
+
+Si_hist <- gg_histogram("Si")
+
+K_hist <- gg_histogram("K")
+
+Ca_hist <- gg_histogram("Ca")
+
+Ba_hist <- gg_histogram("Ba")
+
+Fe_hist <- gg_histogram("Fe")
+
+\# Mulitplot custome function
+
+Reference http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_(ggplot2)/
+
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+
+  library(grid)
+
+  \# Make a list from the ... arguments and plotlist
+
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  \# If layout is NULL, then use 'cols' to determine layout
+  
+  if (is.null(layout)) {
+  
+    \# Make the panel
+  
+    \# ncol: Number of columns of plots
+  
+    \# nrow: Number of rows needed, calculated from \# of cols
+  
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+  
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  
+  }
+
+ if (numPlots==1) {
+ 
+    print(plots[[1]])
+
+  } else {
+ 
+    \# Set up the page
+ 
+    grid.newpage()
+ 
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+
+   \# Make each plot, in the correct location
+
+    for (i in 1:numPlots) {
+
+      \# Get the i,j matrix positions of the regions that contain this subplot
+
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+
+    }
+
+  }
+
+}
+
+\# Calling the multiplot function
+
+multiplot(RI_hist, Na_hist, Mg_hist, Al_hist, Si_hist, K_hist, Ca_hist, Ba_hist, Fe_hist, cols = 3)
+
+\# Relationship between the Predictors
+
+cormat <- round(cor(pred), 4)
+
+melted_cormat <- melt(cormat, varnames = c("X", "Y"))
+
+ggplot(data = melted_cormat, aes(x=X, y=Y, fill=value)) + geom_tile() + ggtitle("Relationship between the Predictors") +
+
+        theme(plot.title = element_text(hjust = 0.5))
+        
+\# Outlier detection
+
+par(mfrow = c(3, 3))
+
+for(col_name in names(pred)[1:length(pred)]) {
+
+    boxplot(pred[col_name], main = col_name, xlab = col_name)
+
+}
+
+\# Skewness
+
+apply(pred, 2, skewness)
+
+\# Box-Cox tranformation for the predictor skewness
+
+boxcox_skewness = function(data) {
+
+  box_cox_trans = BoxCoxTrans(data)
+
+  data_BC = predict(box_cox_trans, data)
+
+  skewness(data_BC) 
+
+}
+
+\# Remove the type or class label out of the dataset
+
+Glass_predictors <- Glass[, -10]
+
+apply(Glass_predictors, 2, boxcox_skewness)
+
+
+#### Question 2
+
+\# Getting the data
+
+data(Soybean)
+
+\# Set the screen layout for plotting
+
+par(mfrow = c(3, 3))
+
+\# Loop through the categorical variables of the data
+
+for(col in names(Soybean)[2:10]) {
+
+    barplot(table(Soybean[col]), main = paste("Bar chart for", col, "variable"), xlab = col, ylab = "Count", col = "grey")
+
+}
+
+for(col in names(Soybean)[11:19]) {
+
+    barplot(table(Soybean[col]), main = paste("Bar chart for", col, "variable"), xlab = col, ylab = "Count", col = "grey")
+
+}
+
+for(col in names(Soybean)[20:28]) {
+
+    barplot(table(Soybean[col]), main = paste("Bar chart for", col, "variable"), xlab = col, ylab = "Count", col = "grey")
+
+}
+
+for(col in names(Soybean)[29:dim(Soybean)[2]]) {
+
+    barplot(table(Soybean[col]), main = paste("Bar chart for", col, "variable"), xlab = col, ylab = "Count", col = "grey")
+
+}
+
+\# Get categorical column numbers
+
+\# For all categorical predictors, need to recall the data
+
+SoybeanCat<-Soybean[, 2:dim(Soybean)[2]]
+
+\# Calculating Near zero varaince
+
+names(Soybean)[nearZeroVar(SoybeanCat)]
+
+\# Missing map
+
+missmap(Soybean, col = c("white", "red"))
+
+\# Duplicate the data
+
+Soybean1 <- Soybean
+
+\# Check for NA across the row wise
+
+Soybean1$has_nans_in_sample = apply(Soybean[,-1], 1, function(x){sum(is.na(x)) > 0 })
+
+\# Tabulate the result
+
+table(Soybean1[, c(1,37)])
+
+\# Get the imputed data using mice
+
+imputed <- mice(Soybean, m=1, maxit = 50, method = 'pmm', seed = 500)
+
+imputed_data <- complete(imputed, 1)
+
+\# Missing map
+
+missmap(imputed_data, col = c("white", "red"))
+
+
+#### Question 3
+
+\# Loading the library
+
+library(caret)
+
+\# Data is loaded
+
+data(BloodBrain)
+
+bbbDescr[, c(1, 2)]
+
+logBBB[1:5]
+
+\# Look for degenerate columns
+
+zero_cols = nearZeroVar(bbbDescr)
+
+colnames(bbbDescr)[zero_cols]
+
+\# Plot the correlation plot 
+
+corrplot(cor(bbbDescr), order="hclust" )
+
+\# Finding out which predictors to elliminate since they have too large correlations
+
+highCorr = findCorrelation(cor(bbbDescr), cutoff=0.75 )
+
+bbbDescr_independent = bbbDescr[,-highCorr]
+
+\# Matrix has no values > cutoff=0.75
+
+corrplot(cor(bbbDescr_independent))
+
+\# Find the number of columns in the dataset before and after the doing correlation
+
+ncol(bbbDescr)
+
+ncol(bbbDescr_independent)
+
+#### End of the Assignemnt
