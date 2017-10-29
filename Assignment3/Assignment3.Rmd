@@ -1,0 +1,1126 @@
+---
+title: "Assignment 3"
+author: "Nishanth Gandhidoss"
+date: "10/12/2017"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message = FALSE)
+```
+
+
+```{r installing necessary packages, include=FALSE}
+# installing the packages
+installNewPackage <- function(packageName) {
+        if(packageName  %in% rownames(installed.packages()) == FALSE)
+        {
+                install.packages(packageName, repos = "http://cran.us.r-project.org", dependencies=TRUE)
+        }
+}
+
+installNewPackage("caret")
+installNewPackage("lars")
+installNewPackage("elasticnet")
+installNewPackage("AppliedPredictiveModeling")
+
+library(caret)
+library(lars)
+library(elasticnet)
+library(AppliedPredictiveModeling)
+```
+
+
+## Question 1 
+
+
+### Section (a)
+
+First let us take the data needed from the caret package. Using the code I have loaded the data and just to show/verify I have loaded the data properly, I am printin out a small subset of the data here.
+
+#### Subset of predictors and target variable
+
+```{r Question1(a)}
+# Load the data
+data(tecator)
+absorp_df <- as.data.frame(absorp)
+endpoints_df <- as.data.frame(endpoints)
+colnames(endpoints_df) = c("mositure", "fat","protein")
+
+# Verify the data is loaded or not
+head(absorp_df[1:5])
+head(endpoints_df)
+```
+
+Thus we have above the data loaded properly. The dataframe absorp_df contains the 100 absorbance values for the 215 samples and the dataframe endpoints_df contains the percent of moisture, fat, and protein as the target varaibel for the predictors.
+
+## Section (b)
+
+Since the number of samples in the data is not very big compared to the number of predictor on comparision to most seen datasets in the world, let us use PCA to find the effective dimension of these data. This will help us to reduce the predictors according to the how much varaiblity we would like to explain with our model. I am using prcomp() to compute the Principal Componets
+
+```{r Question1(b)}
+# Finding the Principal Components
+pc <- prcomp(absorp)
+
+# Looking at the variance and finding the total variance
+vars <- (pc$sdev^2 / sum(pc$sdev^2)) * 100
+
+# Plot the variance for the components
+plot(vars, xlim = c(0, length(vars)), type = 'b', pch = 16, xlab='number of components', ylab='percent of total variation', 
+     main = "Principle Component Analysis")
+
+# Top 5 principle components
+print("Top 5 PCs")
+vars[1:5]
+```
+
+From the graph and the table, We can clearly see that the first component alone explains almost expains 98% of variablity in the data. Thus we clearly understand the true dimensionality of the data is much lower than the number of predictors in the data. So using PCA, we can say that the effective dimension for this data is only the first component. So we will reduce our predictors from 100 to 1. This says that using one predictors to make the prediction would be a better option.
+
+
+### Section (c)
+
+Before we generate the model we need to split the data into training and testing samples. Given the sample size, we will retain the 80% of the samples to the training set and 20% of the sample in the testing set. The train set will be used to tune the models by splitting that into 10 fold for cross validation in order to have better model performance. For spliting the train set we will use Leave group out cross validation with 5 folds.
+
+```{r Question1(c), warning=FALSE}
+# Setting the seed for reproduciablity
+set.seed(1)
+
+# Performing data spliting
+cv_index <- createDataPartition(endpoints[, 3], p = 0.8, list = FALSE)
+absorpTrain <- absorp_df[cv_index,]
+absorpTest <- absorp_df[-cv_index,]
+fatTrain <- endpoints_df[cv_index, 2]
+fatTest <- endpoints_df[-cv_index, 2]
+
+# Setting up the control parameter
+ctrl <- trainControl(method = "LGOCV", repeats = 5)
+# ctrl <- trainControl(method = "repeatedcv", repeats = 10)
+```
+
+### Linear model
+
+Thus after completing spoliting ouf the data, it is time to create models. First up is to create the linear models. Onething we need to think about before buliding the model is the correlation of our predictors. We will find the correlation and use a threshold value of .9 to identify and leeve the predictors which are tend to be highly skwed. In order to find the correlation I have used the findCorrelation() to do this.
+
+```{r correlation}
+# Using coleration to find the correlated predictors
+corThresh <- .9
+tooHigh <- findCorrelation(cor(absorpTrain), corThresh)
+corrPred <- names(absorpTrain)[-tooHigh]
+print("Not correlated predictors in the data is")
+corrPred
+
+# Filter the only applicable data
+absorpTrainFiltered <- data.frame(absorpTrain[, -tooHigh])
+absorpTestFiltered <- data.frame(absorpTest[, -tooHigh])
+colnames(absorpTestFiltered) <- "absorpTrain....tooHigh."
+```
+
+Thus we will use only one predictors ie) V100 in our model that explains 98% of variablity. Lets use that predictors to bulid our linear model
+
+```{r Question1(c)Linear}
+set.seed(1)
+# Creating Linear model
+lm_model <- train(absorpTrainFiltered, fatTrain, method = "lm", trControl = ctrl)
+
+# Print the model
+lm_model
+
+# Finding the root mean square and R^2
+lm_pred <- predict(lm_model, absorpTestFiltered)
+lm_rmse <-RMSE(fatTest, lm_pred)
+lm_R2 <- cor(lm_pred, fatTest, method = "pearson") ^ 2
+
+# Make the prediction plot
+plot(lm_pred, fatTest, xlab = "Predicted", ylab = "Observed", main = "Predicted Vs Observed", pch = 16, cex = 1.3, col = "blue")
+abline(a = as.numeric(lm_model$finalModel$coefficients[1]), 
+       b = as.numeric(lm_model$finalModel$coefficients[2]), col = "red")
+
+# Testset R Squared and rmse
+print("Linear model has used only first predictor V100 in the model according to correlation cut off 0.9")
+print(paste("The RMSE value for linear model on the train set", round(lm_model$results$RMSE, 4)))
+print(paste("The R^2 value for linear model on the train set", round(lm_model$results$Rsquared, 4)))
+print(paste("The RMSE value for linear model on the test set", round(lm_rmse, 4)))
+print(paste("The R^2 value for linear model on the test set", round(lm_R2, 4)))
+```
+
+Thus the above plot shows the predicted vs observered plot of the linear model. And follwoed by we have the model's tuning parameter, RMSE and R square valeu of the train and test sets.
+
+### Partial Least Square
+
+Now let us use partial least square model on our dataset with all the predictors. Here we will use the train() in the caret package with method = pls that represents partial least square. And we will set the train control with our contraol grid. Preprocessing of the data is necessary for this model so we process the data using centering and scaling. After training the model we have the follwoing results.
+
+```{r Question1(c)pls}
+set.seed(1)
+# Create the model
+pls_model <- train(x = absorpTrain, y = fatTrain, method = "pls", trControl = ctrl, preProcess = c("center", "scale"), tuneLength = 20)
+
+# Print the model
+pls_model
+
+# Plot the results
+plot(pls_model, type = c("p", "g"), xlab = "Components", ylab = "RMSE") 
+
+# Make prediction on the test set
+pls_pred <- predict(pls_model, absorpTest, ncomp = as.numeric(pls_model$bestTune))
+
+# Finding the root mean square and R^2
+pls_rmse <-RMSE(fatTest, pls_pred)
+pls_R2 <- cor(pls_pred, fatTest, method = "pearson") ^ 2
+
+# Print the results and tune parameter
+print(paste("The final value used for the model has", as.numeric(pls_model$bestTune), "components"))
+print(paste("The RMSE value for pls model on the train set", round(pls_model$results[as.numeric(pls_model$bestTune), ]$RMSE, 4)))
+print(paste("The R^2 value for pls model on the train set", round(pls_model$results[as.numeric(pls_model$bestTune), ]$Rsquared, 4)))
+print(paste("The RMSE value for pls model on the test set", round(pls_rmse, 4)))
+print(paste("The R^2 value for pls model on the test set", round(pls_R2, 4)))
+```
+
+Thus the above plot shows that the 14 components is the best value to choose for the train set. And followed by we have the model's tuning parameter, RMSE and R square value of the train and test sets.
+
+### Ridge Regression
+
+Let us check how ridge regression is fitting the dataset. Here we will use the train() in the caret package with method = ridge that represents ridge regression. And we will set the train control with our control grid. Preprocessing of the data is necessary for this model so we process the data using centering and scaling. We will use 20 different values of lambda from 0 to 1. After training the model we have the follwoing results.
+
+```{r Question1(c)Rigde}
+# Create the grid for the ridge model
+ridge_grid <- data.frame(.lambda = seq(0, 1, length = 20))
+
+set.seed(1)
+# Create the model
+ridge_model <- train(x = absorpTrain, y = fatTrain, method = "ridge", trControl = ctrl, preProcess = c("center", "scale"), tuneGrid = ridge_grid)
+
+# Print the model
+ridge_model
+
+# Plot the results
+plot(ridge_model, type = c("p", "g"), xlab = "Lambda", ylab = "RMSE")
+
+# Make prediction on the test set
+ridge_pred <- predict(ridge_model, as.matrix(absorpTest), s = as.numeric(ridge_model$bestTune))
+
+# Finding the root mean square and R^2
+ridge_rmse <-RMSE(fatTest, ridge_pred)
+ridge_R2 <- cor(ridge_pred, fatTest, method = "pearson") ^ 2
+
+# Print the results and tune parameter
+print(paste("The final value used for the model has", as.numeric(ridge_model$bestTune), "as lambda value"))
+best_param_value <- ridge_model$results[ridge_model$results$lambda == as.numeric(ridge_model$bestTune), ]
+print(paste("The RMSE value for ridge model on the train set", round(best_param_value$RMSE, 4)))
+print(paste("The R^2 value for rigde model on the train set", round(best_param_value$Rsquared, 4)))
+print(paste("The RMSE value for ridge model on the test set", round(ridge_rmse, 4)))
+print(paste("The R^2 value for rigde model on the test set", round(ridge_R2, 4)))
+```
+
+Thus the above plot shows that the best lambda value for this dataset is 0.05263158 that is choosed from the train set using ridge regression. And followed by we have the model's tuning parameter, RMSE and R square value of the train and test sets.
+
+### Lasso Regression
+
+Let us try lasso regualizer for the dataset. Here we will be using the train() in the caret package with method = enet but that represents lasso regression by setting the lambda in the tune grid to be zero and varying the fraction parameter. Preprocessing of the data is necessary for this model so we process the data using centering and scaling. We will use 20 different values of fraction from 0 to 1. After training the model we have the follwoing results.
+
+```{r Question1(c)lasso, warning=FALSE}
+# Create the grid for the ridge model
+lasso_grid <- data.frame(.lambda =0, .fraction = seq(0, 1, length = 20))
+
+set.seed(1)
+# Create the model
+lasso_model <- train(x = absorpTrain, y = fatTrain, method = "enet", trControl = ctrl, preProcess = c("center", "scale"), tuneGrid = lasso_grid)
+
+# Print the model
+lasso_model
+
+# Plot the results
+plot(lasso_model, type = c("p", "g"), xlab = "Fraction", ylab = "RMSE")
+
+# Make prediction on the test set
+lasso_pred <- predict(lasso_model, as.matrix(absorpTest), s = as.numeric(lasso_model$bestTune))
+
+# Finding the root mean square and R^2
+lasso_rmse <-RMSE(fatTest, lasso_pred)
+lasso_R2 <- cor(lasso_pred, fatTest, method = "pearson") ^ 2
+
+# Print the results and tune parameter
+print(paste("The final value used for the model has", as.numeric(lasso_model$bestTune[1]), "as fraction value"))
+best_param_value <- lasso_model$results[lasso_model$results$fraction == as.numeric(lasso_model$bestTune[1]), ]
+print(paste("The RMSE value for lasso model on the train set", round(best_param_value$RMSE, 4)))
+print(paste("The R^2 value for lasso model on the train set", round(best_param_value$Rsquared, 4)))
+print(paste("The RMSE value for lasso model on the test set", round(lasso_rmse, 4)))
+print(paste("The R^2 value for lasso model on the test set", round(lasso_R2, 4)))
+```
+    
+Thus the above plot shows that the best fraction value for this dataset is 0.05263158 that is choosed from the train set using lasso regression. And followed by we have the model's tuning parameter, RMSE and R square value of the train and test sets.
+
+### Elastic Net
+
+Let us try Elastic net regualizer for the dataset. Here we will be using the train() in the caret package with method = enet but by setting the lambda and fraction in the tune grid to be varying values so that it gives us the otimal parameter for the elastic net model. Preprocessing of the data is necessary for this model so we process the data using centering and scaling. We will use 20 different values of fraction from 0.05 to 1 and three different lambda value as 0, 0.01, 0.1. After training the model we have the following results.
+
+
+```{r Question1(c)enet}
+# Develop the grid
+enetGrid <- expand.grid(.lambda = c(0, 0.01, .1), .fraction = seq(.05, 1, length = 20))
+
+set.seed(1)
+# Train the Enet model
+enet_model <- train(x = absorpTrain, y = fatTrain, method = "enet", tuneGrid = enetGrid, trControl = ctrl, preProc = c("center", "scale"))
+
+# Print the model
+print(enet_model)
+
+# Plot the paramter to see the best parameter
+plot(enet_model, type = c("p", "g"), xlab = "Fraction", ylab = "RMSE")
+
+# Make prediction on the test set
+enet_pred <- predict(enet_model, as.matrix(absorpTest), s = as.numeric(enet_model$bestTune), mode = "fraction")
+
+# Finding the root mean square and R^2
+enet_rmse <-RMSE(fatTest, enet_pred)
+enet_R2 <- cor(enet_pred, fatTest, method = "pearson") ^ 2
+
+# Print the results and tune parameter
+print(paste("The final value used for the model has", as.numeric(enet_model$bestTune[2]), "as lambda value and", enet_model$bestTune[1], "as fraction value"))
+best_param_value <- enet_model$results[enet_model$results$fraction == as.numeric(enet_model$bestTune)[1] & enet_model$results$lambda == as.numeric(enet_model$bestTune)[2], ]
+print(paste("The RMSE value for elastic net model on the train set", round(best_param_value$RMSE, 4)))
+print(paste("The R^2 value for elastic net model on the train set", round(best_param_value$Rsquared, 4)))
+print(paste("The RMSE value for elastic net model on the test set", round(enet_rmse, 4)))
+print(paste("The R^2 value for elastic net model on the test set", round(enet_R2, 4)))
+```
+
+Thus the above plot shows that the best enet model has the parameter of fraction value as 0.05 and lambda as 0 that is choosed from the train set using Elastic net. And followed by we have the model's tuning parameter, RMSE and R square value of the train and test sets.
+
+### Overall Results
+
+After doing all five models the below table shows the Best parameter, RMSE and R square value of the Training and test set.
+
+Model | Parameter |  Training RMSE | Training R Squared | Testing RMSE | Testing R Squared
+----- | --------- | ---- | -------- | ---- | -------- | -----
+    Linear  |   Only V100     |    11.5474    |   0.2422  |   10.2572     |   0.4361  |
+    PLS  |   14 components     |    2.6244    |   0.9629  |   2.2911     |   0.9669  |
+    Ridge  |   Lambda as 0.05263158      |    4.7302    |   0.8804  |   4.0576     |   0.9325  |
+    Lasso  |   Fraction as 0.05263158     |    2.9363    |   0.9524  |   1.8923     |   0.9778  |
+    Elastic Net  |   lambda as 0 & Fraction as 0.05  |    2.9192    |   0.953  |   1.9004     |   0.9776  |
+
+Thus from the table, the optimal tuning parameter value for each model can be found in the Parameters column. The best tunning parameter found from the training set is used on the testing set to make prediction on it for each models. And that is how we find the RMSE and R square value for the test set.
+
+### Section (d)
+
+According to the above results in the table we can say that lasso model has the best predictive ability because it has highest R square value above all other results. On looking at the R square and RMSE value, linear model is significantly worst than other models.
+
+### Section (e)
+
+I would use Lasso for predicting the fat content of a sample as the R squared value on the test set for it 0.9778 which is very large.
+
+## Question 2 
+
+### Section (a)
+
+We will first load the dataset here in order to answer the further question. To ensure I have the data I checked the data dimension and printed out a small subset of the data.
+
+```{r Question2(a)}
+data(permeability)
+fingerprints_df <- as.data.frame(fingerprints)
+head(fingerprints_df[, 1:5])
+permeability[1:5]
+```
+
+Thus we see that both the predictors and target values are loaded properly. The fingerprints contains the 1107 binary molecular predictors for the 165 compounds, while permeability contains permeability response is the responding variable.
+
+### Section (b)
+
+It is been told that the fingerprint predictors are having sparse data. In order to handle this we are going to apply near zero variance to handle this using caret package.
+
+```{r Question2(b)}
+fingerprints_filtered_df <- fingerprints_df[, -nearZeroVar(fingerprints_df)]
+print(paste("Number of predictors left out for modeling is", dim(fingerprints_filtered_df)[2]))
+```
+
+Thus after removing the near zero variance from the model we have 388 predictors left our in the data. We will use this predictors to bulid the models.
+
+### Section (c)
+
+To split the data into a training and a test set, I have 80% of the data put into the train set and left out data samples in the train set. Then using the splitted train set, I willuse Leave group out cross validation because the size of the data points is considerably greater than the size of the predictors. To bulid the model, I have used train() in the caret package and preprocessed the data using center and scaling to tune a partial least squares model. 
+
+```{r Question2(c)i, warning=FALSE}
+# Setting the seed for reproduciablity
+set.seed(1)
+
+# Performing data spliting
+cv_index <- createDataPartition(permeability, p = 0.8, list = FALSE)
+fingerprintsTrain <- fingerprints_filtered_df[cv_index,]
+fingerprintsTest <- fingerprints_filtered_df[-cv_index,]
+permeabilityTrain <- permeability[cv_index]
+permeabilityTest <- permeability[-cv_index]
+
+# Setting up the control parameter
+ctrl <- trainControl(method = "LGOCV")
+
+set.seed(1)
+# Create the model
+pls_model <- train(x = fingerprintsTrain, y = permeabilityTrain, method = "pls", trControl = ctrl, preProcess = c("center", "scale"), tuneLength = 20)
+
+# Print the model
+pls_model
+
+# Plot the results
+plot(pls_model, type = c("p", "g"), xlab = "Components", ylab = "RMSE") 
+
+# Make prediction on the test set
+pls_pred <- predict(pls_model, fingerprintsTest, ncomp = as.numeric(pls_model$bestTune))
+
+# Finding the root mean square and R^2
+pls_rmse <-RMSE(permeabilityTest, pls_pred)
+pls_R2 <- cor(pls_pred, permeabilityTest, method = "pearson") ^ 2
+
+# Print the results and tune parameter
+print(paste("The final value used for the model has", as.numeric(pls_model$bestTune), "components"))
+print(paste("The RMSE value for pls model on the train set", round(pls_model$results[as.numeric(pls_model$bestTune), ]$RMSE, 4)))
+print(paste("The R^2 value for pls model on the train set", round(pls_model$results[as.numeric(pls_model$bestTune), ]$Rsquared, 4)))
+print(paste("The RMSE value for pls model on the test set", round(pls_rmse, 4)))
+print(paste("The R^2 value for pls model on the test set", round(pls_R2, 4)))
+```
+
+Above plot and the results shows that using 7 components would be optimal for this dataset with R squared value of 0.4759. In addition, I also have other information such as train and test set RMSE and R square value.
+
+### Section (d)
+
+The response for this test set using Partial Least Square value is as follows.
+
+```{r Question2(d)}
+pls_pred
+```
+
+The r squared value for the test set is 0.4457.
+
+### Section (e)
+
+### Linear model
+
+Let us first bulid the linear model for this dataset. Usually for the continuous predictors we will be using correlation to process the data. But here we have categorical predictors which we have already been removed with near zero variance processing. I have used train() in the caret package using method as lm. With this we have the following results.
+
+```{r Question2(e)Linear, warning=FALSE}
+set.seed(1)
+# Creating Linear model
+lm_model <- train(fingerprintsTrain, permeabilityTrain, method = "lm", trControl = ctrl)
+
+# Finding the root mean square and R^2
+lm_pred <- predict(lm_model, fingerprintsTest)
+lm_rmse <-RMSE(lm_pred, permeabilityTest)
+lm_R2 <- cor(lm_pred, permeabilityTest, method="pearson") ^ 2
+
+# Make the prediction plot
+plot(lm_pred, permeabilityTest, cex = 1.3, pch = 16, col = "blue", xlab = "Predicted", ylab = "Observed", main = "Predicted vs Observed")
+
+# Testset R Squared and rmse
+print(paste("The RMSE value for linear model on the train set", round(lm_model$results$RMSE, 4)))
+print(paste("The R^2 value for linear model on the train set", round(lm_model$results$Rsquared, 4)))
+print(paste("The RMSE value for linear model on the test set", round(lm_rmse, 4)))
+print(paste("The R^2 value for linear model on the test set", round(lm_R2, 4)))
+```
+
+Above results and the plot shows information such as train and test set RMSE and R square value of the linear model. This model looks worst as it has vert low R square value of 0.0325.
+
+### Ridge Regression
+
+Let us check how ridge regression is fitting the dataset. Here we will use the train() in the caret package with method = ridge that represents ridge regression. And we will set the train control with our control grid. Preprocessing of the data is necessary for this model so we process the data using centering and scaling. We will use 20 different values of lambda from 0 to 0.3 beacuse of the step raise if we set 0 to 1. After training the model we have the follwoing results.
+
+```{r Question2(e)Rigde, warning=FALSE, error=FALSE}
+# Create the grid for the ridge model
+ridge_grid <- data.frame(.lambda = seq(0, .1, length = 20))
+
+set.seed(1)
+# Create the model
+ridge_model <- train(x = fingerprintsTrain, y = permeabilityTrain, method = "ridge", trControl = ctrl, preProcess = c("center", "scale"), tuneGrid = ridge_grid)
+
+# Print the model
+ridge_model
+
+# Plot the results
+plot(ridge_model, type = c("p", "g"), xlab = "Lambda", ylab = "RMSE")
+
+# Make prediction on the test set
+ridge_pred <- predict(ridge_model, as.matrix(fingerprintsTest), s = as.numeric(ridge_model$bestTune))
+
+# Finding the root mean square and R^2
+ridge_rmse <-RMSE(permeabilityTest, ridge_pred)
+ridge_R2 <- defaultSummary(data.frame( obs = permeabilityTest, pred = ridge_pred))[2]
+
+# Print the results and tune parameter
+print(paste("The final value used for the model has", as.numeric(ridge_model$bestTune), "as lambda value"))
+best_param_value <- ridge_model$results[ridge_model$results$lambda == as.numeric(ridge_model$bestTune), ]
+print(paste("The RMSE value for ridge model on the train set", round(best_param_value$RMSE, 4)))
+print(paste("The R^2 value for rigde model on the train set", round(best_param_value$Rsquared, 4)))
+print(paste("The RMSE value for ridge model on the test set", round(ridge_rmse, 4)))
+print(paste("The R^2 value for rigde model on the test set", round(ridge_R2, 4)))
+```
+
+Thus the above plot shows that the best lambda value for this dataset is 0.1578947 that is choosed from the train set using ridge regression. And followed by we have the model's tuning parameter, RMSE and R square value of the train and test sets.
+
+
+### Lasso Regression
+
+Let us try lasso regualizer for the dataset. Here we will be using the train() in the caret package with method = enet but that represents lasso regression by setting the lambda in the tune grid to be zero and varying the fraction parameter. Preprocessing of the data is necessary for this model so we process the data using centering and scaling. We will use 20 different values of fraction from 0 to 1. After training the model we have the follwoing results.
+
+```{r Question2(e)lasso, warning=FALSE,message=FALSE, error=FALSE}
+# Create the grid for the ridge model
+lasso_grid <- expand.grid(.fraction = seq(0.2, 1, length = 20))
+
+set.seed(1)
+# Create the model
+lasso_model <- train(x = fingerprintsTrain, y = permeabilityTrain, method = "lasso", trControl = ctrl, preProcess = c("center", "scale"), tuneGrid = lasso_grid)
+
+# Print the model
+lasso_model
+
+# Plot the results
+plot(lasso_model, type = c("p", "g"), xlab = "Fraction", ylab = "RMSE")
+
+# Make prediction on the test set
+lasso_pred <- predict(lasso_model, as.matrix(fingerprintsTest), s = as.numeric(lasso_model$bestTune[1]), mode = "fraction")
+
+# Finding the root mean square and R^2
+lasso_rmse <- RMSE(permeabilityTest, lasso_pred)
+lasso_R2 <- defaultSummary(data.frame(obs = permeabilityTest, pred = lasso_pred))[2]
+
+# Print the results and tune parameter
+print(paste("The final value used for the model has", as.numeric(lasso_model$bestTune[1]), "as fraction value"))
+best_param_value <- lasso_model$results[lasso_model$results$fraction == as.numeric(lasso_model$bestTune[1]), ]
+print(paste("The RMSE value for lasso model on the train set", round(best_param_value$RMSE, 4)))
+print(paste("The R^2 value for lasso model on the train set", round(best_param_value$Rsquared, 4)))
+print(paste("The RMSE value for lasso model on the test set", round(lasso_rmse, 4)))
+print(paste("The R^2 value for lasso model on the test set", round(lasso_R2, 4)))
+```
+
+Thus the above plot shows that the best fraction value for this dataset is  that is choosed from the train set using lasso regression. And followed by we have the model's tuning parameter, RMSE and R square value of the train and test sets.
+
+### Elastic Net
+
+Let us try Elastic net regualizer for the dataset. Here we will be using the train() in the caret package with method = enet but by setting the lambda and fraction in the tune grid to be varying values so that it gives us the otimal parameter for the elastic net model. Preprocessing of the data is necessary for this model so we process the data using centering and scaling. We will use 20 different values of fraction from 0.05 to 1 and three different lambda value as 0, 0.01, 0.1. After training the model we have the following results.
+
+
+```{r Question2(e)enet, warning=FALSE}
+# Develop the grid
+enetGrid <- expand.grid(.lambda = c(0, 0.01, .1), .fraction = seq(0.05, 1, length = 20))
+
+set.seed(1)
+# Train the Enet model
+enet_model <- train(x = fingerprintsTrain, y = permeabilityTrain, method = "enet", tuneGrid = enetGrid, trControl = ctrl, preProc = c("center", "scale"))
+
+# Print the model
+enet_model
+
+# Plot the paramter to see the best parameter
+plot(enet_model, type = c("p", "g"), xlab = "Fraction", ylab = "RMSE")
+
+# Make prediction on the test set
+enet_pred <- predict(enet_model, as.matrix(fingerprintsTest), s = as.numeric(enet_model$bestTune), mode = "fraction")
+
+# Finding the root mean square and R^2
+enet_rmse <-RMSE(permeabilityTest, enet_pred)
+enet_R2 <- defaultSummary(data.frame(obs = permeabilityTest, pred = enet_pred))[2]
+
+# Print the results and tune parameter
+print(paste("The final value used for the model has", as.numeric(enet_model$bestTune[2]), "as lambda value and", enet_model$bestTune[1], "as fraction value"))
+best_param_value <- enet_model$results[enet_model$results$fraction == as.numeric(enet_model$bestTune)[1] & enet_model$results$lambda == as.numeric(enet_model$bestTune)[2], ]
+print(paste("The RMSE value for elastic net model on the train set", round(best_param_value$RMSE, 4)))
+print(paste("The R^2 value for elastic net model on the train set", round(best_param_value$Rsquared, 4)))
+print(paste("The RMSE value for elastic net model on the test set", round(enet_rmse, 4)))
+print(paste("The R^2 value for elastic net model on the test set", round(enet_R2, 4)))
+```
+
+Thus the above plot shows that the best enet model has the parameter of fraction value as 0.35 and lambda as 0.1 that is choosed from the train set using Elastic net. And followed by we have the model's tuning parameter, RMSE and R square value of the train and test sets.
+
+### Overall Results
+
+After doing all five models the below table shows the Best parameter, RMSE and R square value of the Training and test set.
+
+Model | Parameter |  Training RMSE | Training R Squared | Testing RMSE | Testing R Squared
+----- | --------- | ---- | -------- | ---- | -------- | -----
+    Linear  |   388 predictors     |    47.2918    |   0.1072  |   24.0788     |   0.0325  |
+    PLS  |   7 components     |    11.9295    |   0.4759  |   10.8979     |   0.4457  |
+    Ridge  |   Lambda as 0.1      |    12.9275    |   0.462  |   12.1947     |   0.385  |
+    Lasso  |   Fraction as 0.2     |    1093454.0597    |   0.3858  |   11.4899     |   0.3907  |
+    Elastic Net  |   lambda as 0.1 & Fraction as 0.35  |    11.6297    |   0.4847  |   11.1501     |   0.4271  |
+
+Looking at the table we can say that, PLS is the best for this dataset. Thus the model generated using other models doesn't have better predictive performance than PLS for this test and train split with seed as 1.
+
+### Section (f)
+
+By looking at the above table and expecially the testing R square value, I won't recommend any model to replace the permeability laboratory experiment because the R square values are not high or close to 1.
+
+### Section (g)
+
+In order to look at the important predictor in our list I have used varImp() to get the importance of each and every predictors and sorted it to identify the top 10 predictors in it. Below the list of top 10 important predictors.
+
+```{r Question2(g)}
+# Getting the important predictors
+important <- varImp(pls_model, scale = FALSE)
+plot(important, top = 20)
+```
+
+From the graph we can see that the first predictor X6 with ~0.21 importance is kind of dominating the list.
+
+*** End of Solution ***
+
+### Appendix - Coding
+
+## Question 1 
+
+### Section (a)
+
+#### Subset of predictors and target variable
+
+/# Load the data
+
+data(tecator)
+
+absorp_df <- as.data.frame(absorp)
+
+endpoints_df <- as.data.frame(endpoints)
+
+colnames(endpoints_df) = c("mositure", "fat","protein")
+
+/# Verify the data is loaded or not
+
+head(absorp_df[1:5])
+
+head(endpoints_df)
+
+## Section (b)
+
+/# Finding the Principal Components
+
+pc <- prcomp(absorp)
+
+/# Looking at the variance and finding the total variance
+
+vars <- (pc$sdev^2 / sum(pc$sdev^2)) * 100
+
+/# Plot the variance for the components
+
+plot(vars, xlim = c(0, length(vars)), type = 'b', pch = 16, xlab='number of components', ylab='percent of total variation', 
+
+     main = "Principle Component Analysis")
+
+/# Top 5 principle components
+
+print("Top 5 PCs")
+
+vars[1:5]
+
+### Section (c)
+
+/# Setting the seed for reproduciablity
+
+set.seed(1)
+
+/# Performing data spliting
+
+cv_index <- createDataPartition(endpoints[, 3], p = 0.8, list = FALSE)
+
+absorpTrain <- absorp_df[cv_index,]
+
+absorpTest <- absorp_df[-cv_index,]
+
+fatTrain <- endpoints_df[cv_index, 2]
+
+fatTest <- endpoints_df[-cv_index, 2]
+
+/# Setting up the control parameter
+
+ctrl <- trainControl(method = "LGOCV", repeats = 5)
+
+### Linear model
+
+/# Using coleration to find the correlated predictors
+
+corThresh <- .9
+
+tooHigh <- findCorrelation(cor(absorpTrain), corThresh)
+
+corrPred <- names(absorpTrain)[-tooHigh]
+
+print("Not correlated predictors in the data is")
+
+corrPred
+
+/# Filter the only applicable data
+
+absorpTrainFiltered <- data.frame(absorpTrain[, -tooHigh])
+
+absorpTestFiltered <- data.frame(absorpTest[, -tooHigh])
+
+colnames(absorpTestFiltered) <- "absorpTrain....tooHigh."
+
+set.seed(1)
+
+/# Creating Linear model
+
+lm_model <- train(absorpTrainFiltered, fatTrain, method = "lm", trControl = ctrl)
+
+/# Print the model
+
+lm_model
+
+/# Finding the root mean square and R^2
+
+lm_pred <- predict(lm_model, absorpTestFiltered)
+
+lm_rmse <-RMSE(fatTest, lm_pred)
+
+lm_R2 <- cor(lm_pred, fatTest, method = "pearson") ^ 2
+
+/# Make the prediction plot
+
+plot(lm_pred, fatTest, xlab = "Predicted", ylab = "Observed", main = "Predicted Vs Observed", pch = 16, cex = 1.3, col = "blue")
+
+abline(a = as.numeric(lm_model$finalModel$coefficients[1]), 
+
+       b = as.numeric(lm_model$finalModel$coefficients[2]), col = "red")
+
+/# Testset R Squared and rmse
+
+print("Linear model has used only first predictor V100 in the model according to correlation cut off 0.9")
+
+print(paste("The RMSE value for linear model on the train set", round(lm_model$results$RMSE, 4)))
+
+print(paste("The R^2 value for linear model on the train set", round(lm_model$results$Rsquared, 4)))
+
+print(paste("The RMSE value for linear model on the test set", round(lm_rmse, 4)))
+
+print(paste("The R^2 value for linear model on the test set", round(lm_R2, 4)))
+
+### Partial Least Square
+
+set.seed(1)
+
+/# Create the model
+
+pls_model <- train(x = absorpTrain, y = fatTrain, method = "pls", trControl = ctrl, preProcess = c("center", "scale"), tuneLength = 20)
+
+/# Print the model
+
+pls_model
+
+/# Plot the results
+
+plot(pls_model, type = c("p", "g"), xlab = "Components", ylab = "RMSE") 
+
+/# Make prediction on the test set
+
+pls_pred <- predict(pls_model, absorpTest, ncomp = as.numeric(pls_model$bestTune))
+
+/# Finding the root mean square and R^2
+
+pls_rmse <-RMSE(fatTest, pls_pred)
+
+pls_R2 <- cor(pls_pred, fatTest, method = "pearson") ^ 2
+
+/# Print the results and tune parameter
+
+print(paste("The final value used for the model has", as.numeric(pls_model$bestTune), "components"))
+
+print(paste("The RMSE value for pls model on the train set", round(pls_model$results[as.numeric(pls_model$bestTune), ]$RMSE, 4)))
+
+print(paste("The R^2 value for pls model on the train set", round(pls_model$results[as.numeric(pls_model$bestTune), ]$Rsquared, 4)))
+
+print(paste("The RMSE value for pls model on the test set", round(pls_rmse, 4)))
+
+print(paste("The R^2 value for pls model on the test set", round(pls_R2, 4)))
+
+### Ridge Regression
+
+/# Create the grid for the ridge model
+
+ridge_grid <- data.frame(.lambda = seq(0, 1, length = 20))
+
+set.seed(1)
+
+/# Create the model
+
+ridge_model <- train(x = absorpTrain, y = fatTrain, method = "ridge", trControl = ctrl, preProcess = c("center", "scale"), tuneGrid = ridge_grid)
+
+/# Print the model
+
+ridge_model
+
+/# Plot the results
+
+plot(ridge_model, type = c("p", "g"), xlab = "Lambda", ylab = "RMSE")
+
+/# Make prediction on the test set
+
+ridge_pred <- predict(ridge_model, as.matrix(absorpTest), s = as.numeric(ridge_model$bestTune))
+
+/# Finding the root mean square and R^2
+
+ridge_rmse <-RMSE(fatTest, ridge_pred)
+
+ridge_R2 <- cor(ridge_pred, fatTest, method = "pearson") ^ 2
+
+/# Print the results and tune parameter
+
+print(paste("The final value used for the model has", as.numeric(ridge_model$bestTune), "as lambda value"))
+
+best_param_value <- ridge_model$results[ridge_model$results$lambda == as.numeric(ridge_model$bestTune), ]
+
+print(paste("The RMSE value for ridge model on the train set", round(best_param_value$RMSE, 4)))
+
+print(paste("The R^2 value for rigde model on the train set", round(best_param_value$Rsquared, 4)))
+
+print(paste("The RMSE value for ridge model on the test set", round(ridge_rmse, 4)))
+
+print(paste("The R^2 value for rigde model on the test set", round(ridge_R2, 4)))
+
+/#### Lasso Regression
+
+/# Create the grid for the ridge model
+
+lasso_grid <- data.frame(.lambda =0, .fraction = seq(0, 1, length = 20))
+
+set.seed(1)
+
+/# Create the model
+
+lasso_model <- train(x = absorpTrain, y = fatTrain, method = "enet", trControl = ctrl, preProcess = c("center", "scale"), tuneGrid = lasso_grid)
+
+/# Print the model
+
+lasso_model
+
+/# Plot the results
+
+plot(lasso_model, type = c("p", "g"), xlab = "Fraction", ylab = "RMSE")
+
+/# Make prediction on the test set
+
+lasso_pred <- predict(lasso_model, as.matrix(absorpTest), s = as.numeric(lasso_model$bestTune))
+
+/# Finding the root mean square and R^2
+
+lasso_rmse <-RMSE(fatTest, lasso_pred)
+
+lasso_R2 <- cor(lasso_pred, fatTest, method = "pearson") ^ 2
+
+/# Print the results and tune parameter
+
+print(paste("The final value used for the model has", as.numeric(lasso_model$bestTune[1]), "as fraction value"))
+
+best_param_value <- lasso_model$results[lasso_model$results$fraction == as.numeric(lasso_model$bestTune[1]), ]
+
+print(paste("The RMSE value for lasso model on the train set", round(best_param_value$RMSE, 4)))
+
+print(paste("The R^2 value for lasso model on the train set", round(best_param_value$Rsquared, 4)))
+
+print(paste("The RMSE value for lasso model on the test set", round(lasso_rmse, 4)))
+
+print(paste("The R^2 value for lasso model on the test set", round(lasso_R2, 4)))
+
+/#### Elastic Net
+
+/# Develop the grid
+
+enetGrid <- expand.grid(.lambda = c(0, 0.01, .1), .fraction = seq(.05, 1, length = 20))
+
+set.seed(1)
+
+/# Train the Enet model
+
+enet_model <- train(x = absorpTrain, y = fatTrain, method = "enet", tuneGrid = enetGrid, trControl = ctrl, preProc = c("center", "scale"))
+
+/# Print the model
+
+print(enet_model)
+
+/# Plot the paramter to see the best parameter
+
+plot(enet_model, type = c("p", "g"), xlab = "Fraction", ylab = "RMSE")
+
+/# Make prediction on the test set
+
+enet_pred <- predict(enet_model, as.matrix(absorpTest), s = as.numeric(enet_model$bestTune), mode = "fraction")
+
+/# Finding the root mean square and R^2
+
+enet_rmse <-RMSE(fatTest, enet_pred)
+
+enet_R2 <- cor(enet_pred, fatTest, method = "pearson") ^ 2
+
+/# Print the results and tune parameter
+
+print(paste("The final value used for the model has", as.numeric(enet_model$bestTune[2]), "as lambda value and", enet_model$bestTune[1], "as fraction value"))
+
+best_param_value <- enet_model$results[enet_model$results$fraction == as.numeric(enet_model$bestTune)[1] & enet_model$results$lambda == as.numeric(enet_model$bestTune)[2], ]
+
+print(paste("The RMSE value for elastic net model on the train set", round(best_param_value$RMSE, 4)))
+
+print(paste("The R^2 value for elastic net model on the train set", round(best_param_value$Rsquared, 4)))
+
+print(paste("The RMSE value for elastic net model on the test set", round(enet_rmse, 4)))
+
+print(paste("The R^2 value for elastic net model on the test set", round(enet_R2, 4)))
+
+## Question 2 
+
+### Section (a)
+
+data(permeability)
+
+fingerprints_df <- as.data.frame(fingerprints)
+
+head(fingerprints_df[, 1:5])
+
+permeability[1:5]
+
+### Section (b)
+
+fingerprints_filtered_df <- fingerprints_df[, -nearZeroVar(fingerprints_df)]
+
+print(paste("Number of predictors left out for modeling is", dim(fingerprints_filtered_df)[2]))
+
+### Section (c)
+
+/# Setting the seed for reproduciablity
+
+set.seed(1)
+
+/# Performing data spliting
+
+cv_index <- createDataPartition(permeability, p = 0.8, list = FALSE)
+
+fingerprintsTrain <- fingerprints_filtered_df[cv_index,]
+
+fingerprintsTest <- fingerprints_filtered_df[-cv_index,]
+
+permeabilityTrain <- permeability[cv_index]
+
+permeabilityTest <- permeability[-cv_index]
+
+/# Setting up the control parameter
+
+ctrl <- trainControl(method = "LGOCV")
+
+set.seed(1)
+
+/# Create the model
+
+pls_model <- train(x = fingerprintsTrain, y = permeabilityTrain, method = "pls", trControl = ctrl, preProcess = c("center", "scale"), tuneLength = 20)
+
+/# Print the model
+
+pls_model
+
+/# Plot the results
+
+plot(pls_model, type = c("p", "g"), xlab = "Components", ylab = "RMSE") 
+
+/# Make prediction on the test set
+
+pls_pred <- predict(pls_model, fingerprintsTest, ncomp = as.numeric(pls_model$bestTune))
+
+/# Finding the root mean square and R^2
+
+pls_rmse <-RMSE(permeabilityTest, pls_pred)
+
+pls_R2 <- cor(pls_pred, permeabilityTest, method = "pearson") ^ 2
+
+/# Print the results and tune parameter
+
+print(paste("The final value used for the model has", as.numeric(pls_model$bestTune), "components"))
+
+print(paste("The RMSE value for pls model on the train set", round(pls_model$results[as.numeric(pls_model$bestTune), ]$RMSE, 4)))
+
+print(paste("The R^2 value for pls model on the train set", round(pls_model$results[as.numeric(pls_model$bestTune), ]$Rsquared, 4)))
+
+print(paste("The RMSE value for pls model on the test set", round(pls_rmse, 4)))
+
+print(paste("The R^2 value for pls model on the test set", round(pls_R2, 4)))
+
+### Section (d)
+
+pls_pred
+
+### Section (e)
+
+### Linear model
+
+set.seed(1)
+
+/# Creating Linear model
+
+lm_model <- train(fingerprintsTrain, permeabilityTrain, method = "lm", trControl = ctrl)
+
+/# Finding the root mean square and R^2
+
+lm_pred <- predict(lm_model, fingerprintsTest)
+
+lm_rmse <-RMSE(lm_pred, permeabilityTest)
+
+lm_R2 <- cor(lm_pred, permeabilityTest, method="pearson") ^ 2
+
+/# Make the prediction plot
+
+plot(lm_pred, permeabilityTest, cex = 1.3, pch = 16, col = "blue", xlab = "Predicted", ylab = "Observed", main = "Predicted vs Observed")
+
+/# Testset R Squared and rmse
+
+print(paste("The RMSE value for linear model on the train set", round(lm_model$results$RMSE, 4)))
+
+print(paste("The R^2 value for linear model on the train set", round(lm_model$results$Rsquared, 4)))
+
+print(paste("The RMSE value for linear model on the test set", round(lm_rmse, 4)))
+
+print(paste("The R^2 value for linear model on the test set", round(lm_R2, 4)))
+
+### Ridge Regression
+
+/# Create the grid for the ridge model
+
+ridge_grid <- data.frame(.lambda = seq(0, .1, length = 20))
+
+set.seed(1)
+
+/# Create the model
+
+ridge_model <- train(x = fingerprintsTrain, y = permeabilityTrain, method = "ridge", trControl = ctrl, preProcess = c("center", "scale"), tuneGrid = ridge_grid)
+
+/# Print the model
+
+ridge_model
+
+/# Plot the results
+
+plot(ridge_model, type = c("p", "g"), xlab = "Lambda", ylab = "RMSE")
+
+/# Make prediction on the test set
+
+ridge_pred <- predict(ridge_model, as.matrix(fingerprintsTest), s = as.numeric(ridge_model$bestTune))
+
+/# Finding the root mean square and R^2
+
+ridge_rmse <-RMSE(permeabilityTest, ridge_pred)
+
+ridge_R2 <- defaultSummary(data.frame( obs = permeabilityTest, pred = ridge_pred))[2]
+
+/# Print the results and tune parameter
+
+print(paste("The final value used for the model has", as.numeric(ridge_model$bestTune), "as lambda value"))
+
+best_param_value <- ridge_model$results[ridge_model$results$lambda == as.numeric(ridge_model$bestTune), ]
+
+print(paste("The RMSE value for ridge model on the train set", round(best_param_value$RMSE, 4)))
+
+print(paste("The R^2 value for rigde model on the train set", round(best_param_value$Rsquared, 4)))
+
+print(paste("The RMSE value for ridge model on the test set", round(ridge_rmse, 4)))
+
+print(paste("The R^2 value for rigde model on the test set", round(ridge_R2, 4)))
+
+### Lasso Regression
+
+/# Create the grid for the ridge model
+
+lasso_grid <- expand.grid(.lambda = 0, .fraction = seq(0.05, 1, length = 20))
+
+set.seed(1)
+
+/# Create the model
+
+lasso_model <- train(x = fingerprintsTrain, y = permeabilityTrain, method = "enet", trControl = ctrl, preProcess = c("center", "scale"), tuneGrid = lasso_grid)
+
+/# Print the model
+
+lasso_model
+
+/# Plot the results
+
+plot(lasso_model, type = c("p", "g"), xlab = "Fraction", ylab = "RMSE")
+
+/# Make prediction on the test set
+
+lasso_pred <- predict(lasso_model, as.matrix(fingerprintsTest), s = as.numeric(lasso_model$bestTune)[1], mode = "fraction")
+
+/# Finding the root mean square and R^2
+
+lasso_rmse <- RMSE(permeabilityTest, lasso_pred)
+
+lasso_R2 <- defaultSummary(data.frame(obs = permeabilityTest, pred = lasso_pred))[2]
+
+/# Print the results and tune parameter
+
+print(paste("The final value used for the model has", as.numeric(lasso_model$bestTune[1]), "as fraction value"))
+
+best_param_value <- lasso_model$results[lasso_model$results$fraction == as.numeric(lasso_model$bestTune[1]), ]
+
+print(paste("The RMSE value for lasso model on the train set", round(best_param_value$RMSE, 4)))
+
+print(paste("The R^2 value for lasso model on the train set", round(best_param_value$Rsquared, 4)))
+
+print(paste("The RMSE value for lasso model on the test set", round(lasso_rmse, 4)))
+
+print(paste("The R^2 value for lasso model on the test set", round(lasso_R2, 4)))
+
+#### Elastic Net
+
+/# Develop the grid
+
+enetGrid <- expand.grid(.lambda = c(0, 0.01, .1), .fraction = seq(0.05, 1, length = 20))
+
+set.seed(1)
+
+/# Train the Enet model
+
+enet_model <- train(x = fingerprintsTrain, y = permeabilityTrain, method = "enet", tuneGrid = enetGrid, trControl = ctrl, preProc = c("center", "scale"))
+
+/# Print the model
+
+enet_model
+
+/# Plot the paramter to see the best parameter
+
+plot(enet_model, type = c("p", "g"), xlab = "Fraction", ylab = "RMSE")
+
+/# Make prediction on the test set
+
+enet_pred <- predict(enet_model, as.matrix(fingerprintsTest), s = as.numeric(enet_model$bestTune), mode = "fraction")
+
+/# Finding the root mean square and R^2
+
+enet_rmse <-RMSE(permeabilityTest, enet_pred)
+
+enet_R2 <- defaultSummary(data.frame(obs = permeabilityTest, pred = enet_pred))[2]
+
+/# Print the results and tune parameter
+
+print(paste("The final value used for the model has", as.numeric(enet_model$bestTune[2]), "as lambda value and", enet_model$bestTune[1], "as fraction value"))
+
+best_param_value <- enet_model$results[enet_model$results$fraction == as.numeric(enet_model$bestTune)[1] & enet_model$results$lambda == as.numeric(enet_model$bestTune)[2], ]
+
+print(paste("The RMSE value for elastic net model on the train set", round(best_param_value$RMSE, 4)))
+
+print(paste("The R^2 value for elastic net model on the train set", round(best_param_value$Rsquared, 4)))
+
+print(paste("The RMSE value for elastic net model on the test set", round(enet_rmse, 4)))
+
+print(paste("The R^2 value for elastic net model on the test set", round(enet_R2, 4)))
+
+### Section (g)
+
+/# Getting the important predictors
+
+important <- varImp(pls_model$finalModel, useModel=pls, scale = FALSE)
+
+important_order <- order(important, decreasing = TRUE)
+
+importance_df <- as.data.frame(list(ColumnName = names(fingerprints_filtered_df[, important_order]), Importance = important$Overall[important_order]))
+
+top_10 <- importance_df[1:10, ]
+
+top_10
+
+/# Plot it
+
+plot(top_10$Importance, type="l")
+
+
+#### End of the Assignemnt
