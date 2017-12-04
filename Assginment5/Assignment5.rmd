@@ -1,0 +1,1230 @@
+---
+title: "Assignment 5"
+author: "Nishanth Gandhidoss"
+date: "11/20/2017"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+
+```{r installing necessary packages, include=FALSE}
+# installing the packages
+installNewPackage <- function(packageName) {
+        if(packageName  %in% rownames(installed.packages()) == FALSE)
+        {
+                install.packages(packageName, repos = "http://cran.us.r-project.org", dependencies=TRUE)
+        }
+}
+
+installNewPackage("caret")
+installNewPackage("AppliedPredictiveModeling")
+installNewPackage("pROC")
+installNewPackage("Metrics")
+installNewPackage("ModelMetrics")
+
+library(caret)
+library(AppliedPredictiveModeling)
+library(pROC)
+library(Metrics)
+library(ModelMetrics)
+```
+
+
+## Question 1 
+
+Lets first load the data in here and check whether I have the data. I am just printing the first few elements so that it wont create cluttering in my submission.
+
+```{r Load datai}
+data(hepatic)
+head(injury)
+print(head(bio[, 1:5]))
+print(head(chem[, 1:5]))
+```
+
+Thus we see above that we have the data loaded properly.
+
+### Section (a)
+
+Lets have look at the distributions of injury which is our responding variable.
+
+```{r Question1(a)}
+table(injury)
+barchart(injury, main = "Injury distribution", col = "gray")
+```
+
+From the above table and barchart, we can see that the frequency of Mild is higher than both severe and None. Thus there is no equal distribution of the classes here. I am going to check near zero variance and remove those predictors which have near zero variance. 
+
+```{r Near zero variance}
+# Biological
+nzv <- nearZeroVar(bio)
+bio_nzv <- bio[, -nzv]
+print(sprintf("Biological : Reducing the %d zero variance columns from %d predcitors (fraction =%10.6f)", length(nzv), dim(bio)[2], length(nzv)/dim(bio)[2]))
+
+# Chemical
+nzv <- nearZeroVar(chem)
+chem_nzv <- chem[, -nzv]
+print(sprintf("Chemical : Reducing the %d zero variance columns from %d predcitors (fraction =%10.6f)", length(nzv), dim(chem)[2], length(nzv)/dim(chem)[2]))
+
+# Combined
+bio_chem <- cbind(bio, chem)
+nzv <- nearZeroVar(bio_chem)
+bio_chem_nzv <- bio_chem[, -nzv]
+print(sprintf("Combined : Reducing the %d zero variance columns from %d predcitors (fraction =%10.6f)", 
+              length(nzv), dim(bio_chem)[2], length(nzv)/dim(bio_chem)[2]))
+```
+
+Thus we have the predictors with only non zero variance.
+
+I am going to split the data into train and test set for all three set of predictors here which is biological only, chemical only, biological and chemical. Since we have imbalance in the responding variable, I am going to use stratified sampling to split the dataset using createDataPartition.
+
+```{r Train test split}
+# Set the seed
+set.seed(1)
+
+# Split train and test set for all three set of predictors
+cv_index <- createDataPartition(injury, p = 0.8, list = FALSE)
+bio_train <- bio_nzv[cv_index, ]
+bio_test <- bio_nzv[-cv_index, ]
+chem_train <- chem_nzv[cv_index, ]
+chem_test <- chem_nzv[-cv_index, ]
+bio_chem_train <- bio_chem_nzv[cv_index, ]
+bio_chem_test <- bio_chem_nzv[-cv_index, ]
+injury_train <- injury[cv_index]
+injury_test <-  injury[-cv_index]
+print("All three set of predictors and responding variables train and test split is completed using stratified sampling")
+```
+
+Thus given the imbalance in the dataset, we have split the train and test set using strartified sampling.
+
+
+### Section (b)
+
+The reponding variable here is inujury having three classes "Severe", "Mild", "None". My aim is that I wanted to create a model that best fits the data so that we can predict all the classes equally. For that purpose, I am here concern about the accuracy of the model. I am going to accuracy for my model prediction. And also to mention that the question in scetion C is asking about how much information is given by the best model on the hepatic data. It is also one more reason I choose to use accuracy.
+
+Thus the classifcation statistics that I am going to use here is Accuracy.
+
+### Section (c)
+
+We have split the data into test and train set already and also removed the near zero variance predictors. I will be using those to create the models for biological and chemical predictors seperately.
+
+```{r Custom functions, include=FALSE, message=FALSE}
+# Custom analysis function
+analysis <- function(classifier, X, y) {
+    # Compute the prediction probablities for each classes
+    probs <- predict(classifier, X, type = "prob")
+    # Make the predcit by taking max probabiltiy class
+    pred <- as.factor(colnames(probs)[apply(probs, 1, which.max)])
+    # Get the ROC and AUC
+    acc <- accuracy(actual = as.numeric(y), predicted = as.numeric(pred))
+    return (list(classifier = classifier, acc = acc))
+}
+
+# Custom function to build all the models
+build_models <- function(X_train, y_train, X_test, y_test, seed_value=1) {
+    
+    # Calling MUlticlass summary for train control with Class prob set to TRUE
+    ctrl <- trainControl(method = "LGOCV")
+    
+    # Removing the highly correlated predictors out for
+    # logistic and LDA models
+    too_high <- findCorrelation(cor(X_train), 0.9)
+    X_train_cor <- as.data.frame(X_train[, -too_high])
+    X_test_cor <- as.data.frame(X_test[, -too_high])
+
+    # Logistic Regression Model:
+    set.seed(seed_value)
+    glm.classifier <- train(X_train_cor, y_train, method = "multinom", preProcess = c("center", "scale"), metric = "Accuracy", trControl = ctrl)
+    glm <- analysis(glm.classifier, X_test_cor, y_test)
+
+    # Linear Discriminant Analysis:
+    set.seed(seed_value)
+    lda.classifier <- train(X_train_cor, y_train, method = "lda", preProc = c("center","scale"), metric = "Accuracy", trControl = ctrl)
+    lda <- analysis(lda.classifier, X_test_cor, y_test)
+
+    # Partial Least Squares Discriminant Analysis
+    set.seed(seed_value)
+    plsda.classifier <- train(X_train, y_train, method = "pls", tuneGrid = expand.grid(.ncomp=1:10), 
+                             preProc = c("center","scale"), metric = "Accuracy", trControl = ctrl)
+    plsda <- analysis(plsda.classifier, X_test, y_test)
+    
+    # Penalized Methods
+    glmnGrid <- expand.grid(.alpha = c(0, .1, .2, .4, .6), .lambda = seq(.01, .2, length = 10))
+    set.seed(seed_value)
+    glmnet.classifier <- train(X_train, y_train, method = "glmnet", tuneGrid = glmnGrid, preProc = c("center","scale"), 
+                               metric = "Accuracy", trControl = ctrl)
+    glmnet <- analysis(glmnet.classifier, X_test, y_test)
+    
+    # Nearest shrunken Centroids:
+    nscGrid <- data.frame(.threshold = seq(0,4, by=0.2))
+    set.seed(seed_value)
+    nsc.classifier <- train(X_train, y_train, method = "pam", tuneGrid = nscGrid, preProc = c("center","scale"), metric = "Accuracy",
+                            trControl = ctrl)
+    nsc <- analysis(nsc.classifier, X_test, y_test)
+
+    result <- list(glm = glm, lda = lda, plsda = plsda, glmnet = glmnet, nsc = nsc )
+    return (result)
+}
+```
+
+### Biological Predictors
+
+First lets see about biological predictors effects on hepatic toxicity.
+
+```{r Question1(c) biological predictors, include=FALSE, message=FALSE}
+# Check the file exists and load to variables
+# else bulid and store the model
+if(file.exists("bio_results.rds")) {
+    bio_results <- readRDS("bio_results.rds")
+} else {
+    bio_results <- build_models(bio_train, injury_train, bio_test, injury_test)
+    saveRDS(bio_results, "bio_results.rds")
+}
+```
+
+### Logistic Regression
+
+For the logistic regression, I have removed the highly correlated predcitor out of the predictors set with cut off threshold of 0.9. Lets view the results of this now.
+
+```{r Logistic Regressioni}
+bio_results$glm$classifier
+plot(bio_results$glm$classifier)
+print(paste("Test set Accuracy: ", round(bio_results$glm$acc, 4)))
+```
+
+Thus the model has accuracy of 0.4643 on the test set with decay parameter = 0.1
+
+### Linear Discriminant Analysis
+
+Similar to logistic regression, I have removed the highly correlated values out of the predictors and then passed on to the model. Since there are no tuning paramter for this model, I am not showing any plots. Lets see the results
+
+```{r Linear Discriminant Analysisi}
+bio_results$lda$classifier
+print(paste("Test set Accuracy: ", round(bio_results$lda$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5 on the test set.
+
+### Partial Least Squares Discriminant Analysis
+
+Let see what is the results for partial least squares discriminant model
+
+```{r Partial Least Squares Discriminant Analysisi}
+bio_results$plsda$classifier
+plot(bio_results$plsda$classifier)
+print(paste("Test set Accuracy: ", round(bio_results$plsda$acc, 4)))
+```
+
+Thus the model has accuracy of 0.4643 on the test set with one component.
+
+### Penalized Methods
+
+Let see whst is the result for penalized model
+
+```{r Penalized Methodsi}
+bio_results$glmnet$classifier
+plot(bio_results$glmnet$classifier)
+print(paste("Test set Accuracy: ", round(bio_results$glmnet$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5 on the test set with alpha = 0.6 and lambda = 0.05222222.
+
+### Nearest shrunken Centroids
+
+And finally, lets see the results of Nearest shrunken Centroids for the biological predictors
+
+```{r Nearest shrunken Centroidsi}
+bio_results$nsc$classifier
+plot(bio_results$nsc$classifier)
+print(paste("Test set Accuracy: ", round(bio_results$nsc$acc, 4)))
+```
+
+Thus the model has accuracy of 0.4464 on the test set with threshold = 0.
+
+Below table shows the compilation of the information regarding the above models all together.
+
+Model | Parameter |  Training Accuracy |  Testing Accuracy | 
+----- | --------- | -------------- | ------------------ | 
+    Logistic Regression  |   decay = 0.1     |    0.4035714    |   0.4643  |
+    Linear Discriminant Analysis  |   None     |    0.3857    |    0.5  |
+    Partial Least Squares Discriminant Analysis  |   ncomp = 1     |    0.5379     |   0.4643  |
+    Penalized Methods  |   alpha = 0.6 & lambda = 0.05222222    |    0.5257143    |   0.5  |
+    Nearest shrunken Centroids  |   threshold = 0   |    0.5379    |   0.4464  |
+    
+From the above table we can see that Linear Discriminant Analysis(LDA) and Penalized Methods has better predictive ability with test set accuracy of 0.5 for the biological predictors.
+    
+### Chemical Predcitor
+
+Now lets see about chemical predictors effects on hepatic toxicity.
+
+```{r Question1(c) chemical predictors, include=FALSE, message=FALSE}
+# Check the file exists and load to variables
+# else bulid and store the model
+if(file.exists("chem_results.rds")) {
+    chem_results <- readRDS("chem_results.rds")
+} else {
+    chem_results <- build_models(chem_train, injury_train, chem_test, injury_test)
+    saveRDS(chem_results, "chem_results.rds")
+}
+```
+
+### Logistic Regression
+
+For the logistic regression, I have removed the highly correlated predcitor out of the predictors set with cut off threshold of 0.9. Lets view the results of this now.
+
+```{r Logistic Regressionii}
+chem_results$glm$classifier
+plot(chem_results$glm$classifier)
+print(paste("Test set Accuracy: ", round(chem_results$glm$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5714 on the test set with decay 0.1.
+
+### Linear Discriminant Analysis
+
+Similar to logistic regression, I have removed the highly correlated values out of the predictors and then passed on to the model. Since there are no tuning paramter for this model, I am not showing any plots. Lets see the results
+
+```{r Linear Discriminant Analysisii}
+chem_results$lda$classifier
+print(paste("Test set Accuracy: ", round(chem_results$lda$acc, 4)))
+```
+
+Thus the model has accuracy of 0.6607 on the test set.
+
+### Partial Least Squares Discriminant Analysis
+
+Let see what is the results for partial least squares discriminant model
+
+```{r Partial Least Squares Discriminant Analysisii}
+chem_results$plsda$classifier
+plot(chem_results$plsda$classifier)
+print(paste("Test set Accuracy: ", round(chem_results$plsda$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5536 on the test set with two components.
+
+### Penalized Methods
+
+Let see whst is the result for penalized model
+
+```{r Penalized Methodsii}
+chem_results$glmnet$classifier
+plot(chem_results$glmnet$classifier)
+print(paste("Test set Accuracy: ", round(chem_results$glmnet$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5536 on the test set with alpha = 0.6 and lambda = 0.09444444.
+
+### Nearest shrunken Centroids
+
+And finally, lets see the results of Nearest shrunken Centroids for the biological predictors
+
+```{r Nearest shrunken Centroidsii}
+chem_results$nsc$classifier
+plot(chem_results$nsc$classifier)
+print(paste("Test set Accuracy: ", round(chem_results$nsc$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5179 on the test set with threshold = 1.4.
+
+Below table shows the compilation of the information regarding the above models all together.
+
+Model | Parameter |  Training Accuracy |  Testing Accuracy | 
+----- | --------- | -------------- | ------------------ | 
+    Logistic Regression  |   decay = 0.1     |    0.4564    |   0.5714  |
+    Linear Discriminant Analysis  |   None     |    0.4564    |    0.6607  |
+    Partial Least Squares Discriminant Analysis  |   ncomp = 2     |    0.5079     |   0.5536  |
+    Penalized Methods  |   alpha = 0.6 & lambda = 0.09444444    |    0.5221    |   0.5536  |
+    Nearest shrunken Centroids  |   threshold = 1.4   |    0.5179    |   0.5179  |
+    
+From the above table we can see that Linear Discriminant Analysis(LDA) model has better predictive ability with test set accuracy of 0.6607 for the chemical predictors.
+
+Thus on comparing the chemical and biological predictors results and its model accuracies, it looks like the Linear Discriminant Analysis(LDA) model using the Chemical predictors contains the most information about hepatic toxicity.
+    
+### Section (d)
+
+Now let see the optimal models for both the biological and chemical predictors, the top five important predictors. The best model for both biological and chemical predictor is Linear Discriminant Analysis.
+
+```{r Question1(d)i}
+# Biological Predictors
+bio_imp <- varImp(bio_results$lda$classifier, scale = FALSE, top = 5)
+bio_imp$importance[order(rowSums(bio_imp$importance), decreasing = TRUE), ][1:5, ]
+plot(bio_imp, top = 5, main = "LDA - Biological Predictors")
+```
+
+From the above table, we can see the top 5 important predictors for the biological set of predictors.
+
+```{r Question1(d)ii}
+# Chemical Predictors
+chem_imp <- varImp(chem_results$lda$classifier)
+chem_imp$importance[order(rowSums(chem_imp$importance), decreasing = TRUE), ][1:5, ]
+plot(chem_imp, top = 5, main = "LDA - Chemical Predictors")
+```
+
+From the above table, we can see the top 5 important predictors for the chemical set of predictors.
+
+## Section (e)
+
+### Combined Predictors
+
+I have combined both chemical and biological predictor into one. Let try to predict the hepatic toxcity with this combined predictors
+
+```{r Question(e), include=FALSE, message=FALSE}
+# Check the file exists and load to variables
+# else bulid and store the model
+if(file.exists("bio_chem_results.rds")) {
+    bio_chem_results <- readRDS("bio_chem_results.rds")
+} else {
+    bio_chem_results <- build_models(bio_chem_train, injury_train, bio_chem_test, injury_test)
+    saveRDS(bio_chem_results, "bio_chem_results.rds")
+}
+```
+
+### Logistic Regression
+
+For the logistic regression, I have removed the highly correlated predcitor out of the predictors set with cut off threshold of 0.9. Lets view the results of this now.
+
+```{r Logistic Regressioniii}
+bio_chem_results$glm$classifier
+plot(bio_chem_results$glm$classifier)
+print(paste("Test set Accuracy: ", round(bio_chem_results$glm$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5893 on the test set with decay = 0.1.
+
+### Linear Discriminant Analysis
+
+Similar to logistic regression, I have removed the highly correlated values out of the predictors and then passed on to the model. Since there are no tuning paramter for this model, I am not showing any plots. Lets see the results
+
+```{r Linear Discriminant Analysisiii}
+bio_chem_results$lda$classifier
+print(paste("Test set Accuracy: ", round(bio_chem_results$lda$acc, 4)))
+```
+
+Thus the model has accuracy of 0.3929 on the test set.
+
+### Partial Least Squares Discriminant Analysis
+
+Let see what is the results for partial least squares discriminant model
+
+```{r Partial Least Squares Discriminant Analysisiii}
+bio_chem_results$plsda$classifier
+plot(bio_chem_results$plsda$classifier)
+print(paste("Test set Accuracy: ", round(bio_chem_results$plsda$acc, 4)))
+```
+
+Thus the model has accuracy of 0.4643 on the test set with ncomp = 1.
+
+### Penalized Methods
+
+Let see whst is the result for penalized model
+
+```{r Penalized Methodsiii}
+bio_chem_results$glmnet$classifier
+plot(bio_chem_results$glmnet$classifier)
+print(paste("Test set Accuracy: ", round(bio_chem_results$glmnet$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5 on the test set with alpha = 0.4 and lambda = 0.1155556.
+
+### Nearest shrunken Centroids
+
+And finally, lets see the results of Nearest shrunken Centroids for the biological predictors
+
+```{r Nearest shrunken Centroidsiii}
+bio_chem_results$nsc$classifier
+plot(bio_chem_results$nsc$classifier)
+print(paste("Test set Accuracy: ", round(bio_chem_results$nsc$acc, 4)))
+```
+
+Thus the model has accuracy of 0.5179 on the test set with threshold = 1.4.
+
+Below table shows the compilation of the information regarding the above models all together.
+
+Model | Parameter |  Training Accuracy |  Testing Accuracy | 
+----- | --------- | -------------- | ------------------ | 
+    Logistic Regression  |   decay = 0.1     |    0.4050    |   0.5893  |
+    Linear Discriminant Analysis  |   None     |    0.3514    |    0.3929  |
+    Partial Least Squares Discriminant Analysis  |   ncomp = 1     |    0.5136     |   0.4643  |
+    Penalized Methods  |   alpha = 0.4 & lambda = 0.1155556   |    0.5307    |   0.5  |
+    Nearest shrunken Centroids  |   threshold = 1.4   |    0.5179    |   0.5179  |
+    
+From the above table we can see that Logistic Regression model has better predictive ability with test set accuracy of 0.5893 for the combined predictors of both chemical and biological predictors.
+
+But however it does not perform better than other model from above predictor set especially Linear Discriminant Analysis from the biological predictor which has the accuracy of 0.6607.
+
+### Important Predictors
+
+Lets see the top 5 important predictors of the combined predcitors for the best model in this set that is logistic regression.
+
+```{r Importsnt Predictorsii}
+bio_chem_imp <- varImp(bio_chem_results$nsc$classifier)
+bio_chem_imp$importance[order(rowSums(bio_chem_imp$importance), decreasing = TRUE), ][1:5, ]
+plot(bio_chem_imp, top = 5, main = "Logistic Regression - Combined Predictors")
+```
+
+Above we have the important predictors for the combined predictors model.
+
+On camparing with the previous models from the chemical only and biological only predictors, the models on the combined predictors performs bit less. This might be due to the biological predcitors addition because we saw before that the biological predictors models doesn't have huge accuracies values for hepatic toxcity.
+
+## Section (e)
+
+I won't be recommending any of this model to be used in real time because the highest accuracy achived from developing all this models is 0.6607 which is not huge number that could be recommended to be used with real world applications. This being determining the hepatic toxicity that goes into the sector of health care, I don't think that 0.6607 accuracy is enough for recommending using to predict compounds.
+
+## Question 2
+
+Lets first load the data in here and check whether I have the data porperly. I am just printing the first few elements so that it wont create cluttering in my submission.
+
+```{r Question 2}
+data(oil)
+head(fattyAcids)
+head(oilType)
+```
+
+Thus we see above that we have the data loaded properly.
+
+### Section (a)
+
+Lets have look at the distributions of oil type which is our responding variable
+
+```{r Question2(a)}
+table(oilType)
+barchart(oilType, main = "Oil type distribution", col = "gray")
+```
+
+From the above table and barchart, we can see that the frequency of our responding variable is not distributed mutually. Thus there is no equal distribution of the classes here. I am going to check for near zero variance and remove those predictors which have near zero variance. 
+
+```{r Near zero variancei}
+nzv <- nearZeroVar(fattyAcids)
+print(sprintf("Biological : Reducing the %d zero variance columns from %d predcitors (fraction =%10.6f)", length(nzv), dim(fattyAcids)[2],
+              length(nzv)/dim(fattyAcids)[2]))
+```
+
+Thus we can see that there is no near zero variance predictors and we will be using all the predictors for buliding the models. Since we have very less number of samples I am not going to split the data into train and test. 
+
+### Section (b)
+
+Since we are targeting about how accurate our model is and also how well it is identifying all the classes in the responding variable, It will be more appropriate to use accuracy as the classification statistics for this exercise.
+
+### Section (c)
+
+Lets bulid the models, make predcition and calculate the accuracy to decide which model is having the best and worst performance etc.
+
+```{r Question2(c), include=FALSE}
+# Custom accuracy analysis function
+analysis_acc <- function(classifier, X, y) {
+    # Make the predictions
+    pred <- predict(classifier, X)
+    # Compute the confusion matrix
+    cm <- caret::confusionMatrix(data = pred, reference = y)
+    acc <- cm$overall[1]
+    return (list(classifier = classifier, confusionMatrix = cm, accuracy = acc))
+}
+
+# Custome models build model with accuracy
+build_linear_models <- function(X, y, seed_value = 1){
+
+    # Removing the highly correlated predictors out for
+    # logistic and LDA models
+    too_high <- findCorrelation(cor(X), 0.9)
+    X_cor <- as.data.frame(X[, -too_high])
+
+    # Logistic Regression Model:
+    set.seed(seed_value)
+    glm.classifier <- train(X_cor, y, method = "multinom", preProcess = c("center", "scale"))
+    glm <- analysis_acc(glm.classifier, X, y)
+    
+    # Linear Discriminant Analysis:
+    #
+    set.seed(seed_value)
+    lda.classifier <- train(X_cor, y, method = "lda", preProc = c("center", "scale"))
+    lda <- analysis_acc(lda.classifier, X, y)
+
+    # Partial Least Squares Discriminant Analysis
+    #
+    set.seed(seed_value)
+    plsda.classifier <- train(X, y, method = "pls", tuneGrid = expand.grid(.ncomp=1:6), preProc = c("center","scale"))
+    plsda <- analysis_acc(plsda.classifier, X, y)
+    
+    # Penalized Methods:
+    #
+    glmnGrid <- expand.grid(.alpha = c(0, .1, .2, .4, .6), .lambda = seq(.01, .2, length = 10))
+    set.seed(seed_value)
+    glmnet.classifier <- train(X, y, method = "glmnet", tuneGrid = glmnGrid, preProc = c("center", "scale"))
+    glmnet <- analysis_acc(glmnet.classifier, X, y)
+
+    # Nearest Shrunken Centroids:
+    #
+    nscGrid <- data.frame(.threshold = seq(0,4, by=0.2))
+    set.seed(seed_value)
+    nsc.classifier <- train(X, y, method = "pam", tuneGrid = nscGrid, preProc = c("center", "scale"))
+    nsc <- analysis_acc(nsc.classifier, X, y)
+
+    return (list(glm = glm, plsda = plsda, lda=lda, glmnet=glmnet, nsc=nsc))
+}
+```
+
+
+```{r Question2(c) chemical predictors, include=FALSE, message=FALSE}
+# Check the file exists and load to variables
+# else bulid and store the model
+if(file.exists("fatty_results.rds")) {
+    fatty_results <- readRDS("fatty_results.rds")
+} else {
+    fatty_results <- build_linear_models(fattyAcids, oilType)
+    saveRDS(fatty_results, "fatty_results.rds")
+}
+```
+
+### Logistic Regression
+
+For the logistic regression, I have removed the highly correlated predcitor out of the predictors set with cut off threshold of 0.9. Lets view the results of this now.
+
+```{r Question2(c) Logistic Regressionii}
+fatty_results$glm$classifier
+fatty_results$glm$confusionMatrix
+print(paste("Accuracy on the whole training set: ", round(fatty_results$glm$accuracy, 4)))
+```
+
+Thus the model has a accuracy of 1 on the whole training set with decay = 1e-04.
+
+### Linear Discriminant Analysis
+
+Similar to logistic regression, I have removed the highly correlated values out of the predictors and then passed on to the model. Since there are no tuning paramter for this model, I am not showing any plots. Lets see the results
+
+```{r Question2(c) Linear Discriminant Analysisii}
+fatty_results$lda$classifier
+fatty_results$lda$confusionMatrix
+print(paste("Accuracy on the whole training set: ", round(fatty_results$lda$accuracy, 4)))
+```
+
+Thus the model has a accuracy of 0.9688 on the whole training set.
+
+### Partial Least Squares Discriminant Analysis
+
+Let see what is the results for partial least squares discriminant model
+
+```{r Question2(c) Partial Least Squares Discriminant Analysisii}
+fatty_results$plsda$classifier
+plot(fatty_results$plsda$classifier)
+fatty_results$plsda$confusionMatrix
+print(paste("Accuracy on the whole training set: ", round(fatty_results$plsda$accuracy, 4)))
+```
+
+Thus the model has a accuracy of 0.9583 on the whole training set with six components.
+
+### Penalized Methods
+
+Let see whst is the result for penalized model
+
+```{r Question2(c) Penalized Methodsii}
+fatty_results$glmnet$classifier
+plot(fatty_results$glmnet$classifier)
+fatty_results$glmnet$confusionMatrix
+print(paste("Accuracy on the whole training set: ", round(fatty_results$glmnet$accuracy, 4)))
+```
+
+Thus the model has a accuracy of 0.9896 on the whole training set with alpha = 0.4 and lambda = 0.01.
+
+### Nearest shrunken Centroids
+
+And finally, lets see the results of Nearest shrunken Centroids for the biological predictors
+
+```{r Question2(c) Nearest shrunken Centroidsii}
+fatty_results$nsc$classifier
+plot(fatty_results$nsc$classifier)
+fatty_results$nsc$confusionMatrix
+print(paste("Accuracy on the whole training set: ", round(fatty_results$nsc$accuracy, 4)))
+```
+
+Thus the model has a accuracy of 0.9792 on the whole training set with threshold = 0.4.
+
+```{r}
+summary_fattyacids_df <- rbind(data.frame(name = "Logistic Regression",  OptimalParameter = "None", 
+                                          Accuracy = fatty_results$glm$accuracy), 
+                               data.frame(name = "Linear Discriminant Analysis", OptimalParameter = "None", 
+                                          Accuracy = fatty_results$lda$accuracy), 
+                               data.frame(name = "Partial Least Squares Discriminant Analysis", OptimalParameter = "ncomp = 6", 
+                                          Accuracy = fatty_results$plsda$accuracy),
+                               data.frame(name = "Penalized Methods", OptimalParameter = "alpha = 0.4 and lambda = 0.01",
+                                          Accuracy = fatty_results$plsda$accuracy),
+                               data.frame(name = "Nearest shrunken Centroids", OptimalParameter = "threshold = 0.4", Accuracy = fatty_results$nsc$accuracy))
+rownames(summary_fattyacids_df) = NULL
+```
+
+Below table shows the compilation of the information regarding the above models all together.
+
+Model | Parameter |  Best Resampling Accuracy |  Accuracy on whole data | 
+----- | --------- | -------------- | ---------------------- | 
+    Logistic Regression  |   decay = 1e-04     |    0.9426    |   1  |
+    Linear Discriminant Analysis  |   None     |    0.9559    |    0.9688  |
+    Partial Least Squares Discriminant Analysis  |   ncomp = 6     |    0.9133     |   0.9583  |
+    Penalized Methods  |   alpha = 0.4 & lambda = 0.01   |    0.9685    |   0.9896  |
+    Nearest shrunken Centroids  |   threshold = 0.4   |    0.961    |   0.9792  |
+    
+From the above table we can see that Logistic Regression model has better predictive ability on the whole dataset with the value of 1 as accuracy. Let see the confusion matrix of the logistic regression model to do further analysis.
+
+```{r LRCM}
+fatty_results$glm$confusionMatrix$table
+```
+
+We can see the logistic regression predicts all the oil type accurately. Thus all the classes can be considered to be most predicting classes in this case. Since there is no missclassification in the confusion matrix, this model does have any least predicting classes.
+
+*** End of Solution ***
+
+### Appendix - Coding
+
+\# installing the packages
+
+installNewPackage <- function(packageName) {
+
+        if(packageName  %in% rownames(installed.packages()) == FALSE)
+
+        {
+
+                install.packages(packageName, repos = "http://cran.us.r-project.org", dependencies=TRUE)
+
+        }
+
+}
+
+installNewPackage("caret")
+
+installNewPackage("AppliedPredictiveModeling")
+
+installNewPackage("pROC")
+
+installNewPackage("Metrics")
+
+installNewPackage("ModelMetrics")
+
+library(caret)
+
+library(AppliedPredictiveModeling)
+
+library(pROC)
+
+library(Metrics)
+
+library(ModelMetrics)
+
+## Question 1 
+
+data(hepatic)
+
+head(injury)
+
+print(head(bio[, 1:5]))
+
+print(head(chem[, 1:5]))
+
+### Section (a)
+
+table(injury)
+
+barchart(injury, main = "Injury distribution", col = "gray")
+
+\# Biological
+
+nzv <- nearZeroVar(bio)
+
+bio_nzv <- bio[, -nzv]
+
+print(sprintf("Biological : Reducing the %d zero variance columns from %d predcitors (fraction =%10.6f)", length(nzv), dim(bio)[2], length(nzv)/dim(bio)[2]))
+
+\# Chemical
+
+nzv <- nearZeroVar(chem)
+
+chem_nzv <- chem[, -nzv]
+
+print(sprintf("Chemical : Reducing the %d zero variance columns from %d predcitors (fraction =%10.6f)", length(nzv), dim(chem)[2], length(nzv)/dim(chem)[2]))
+
+\# Combined
+
+bio_chem <- cbind(bio, chem)
+
+nzv <- nearZeroVar(bio_chem)
+
+bio_chem_nzv <- bio_chem[, -nzv]
+
+print(sprintf("Combined : Reducing the %d zero variance columns from %d predcitors (fraction =%10.6f)", 
+
+              length(nzv), dim(bio_chem)[2], length(nzv)/dim(bio_chem)[2]))
+
+\# Set the seed
+
+set.seed(1)
+
+\# Split train and test set for all three set of predictors
+
+cv_index <- createDataPartition(injury, p = 0.8, list = FALSE)
+
+bio_train <- bio_nzv[cv_index, ]
+
+bio_test <- bio_nzv[-cv_index, ]
+
+chem_train <- chem_nzv[cv_index, ]
+
+chem_test <- chem_nzv[-cv_index, ]
+
+bio_chem_train <- bio_chem_nzv[cv_index, ]
+
+bio_chem_test <- bio_chem_nzv[-cv_index, ]
+
+injury_train <- injury[cv_index]
+
+injury_test <-  injury[-cv_index]
+
+print("All three set of predictors and responding variables train and test split is completed using stratified sampling")
+
+
+\# Custom analysis function
+
+analysis <- function(classifier, X, y) {
+
+    \# Compute the prediction probablities for each classes
+    
+    probs <- predict(classifier, X, type = "prob")
+    
+    \# Make the predcit by taking max probabiltiy class
+    
+    pred <- as.factor(colnames(probs)[apply(probs, 1, which.max)])
+    
+    \# Get the ROC and AUC
+    
+    acc <- accuracy(actual = as.numeric(y), predicted = as.numeric(pred))
+    
+    return (list(classifier = classifier, acc = acc))
+
+}
+
+\# Custom function to build all the models
+
+build_models <- function(X_train, y_train, X_test, y_test, seed_value=1) {
+    
+    \# Calling MUlticlass summary for train control with Class prob set to TRUE
+
+    ctrl <- trainControl(method = "LGOCV")
+    
+    \# Removing the highly correlated predictors out for
+    
+    \# logistic and LDA models
+    
+    too_high <- findCorrelation(cor(X_train), 0.9)
+    
+    X_train_cor <- as.data.frame(X_train[, -too_high])
+    
+    X_test_cor <- as.data.frame(X_test[, -too_high])
+
+    \# Logistic Regression Model:
+    
+    set.seed(seed_value)
+    
+    glm.classifier <- train(X_train_cor, y_train, method = "multinom", preProcess = c("center", "scale"), metric = "Accuracy", trControl = ctrl)
+    
+    glm <- analysis(glm.classifier, X_test_cor, y_test)
+
+    \# Linear Discriminant Analysis:
+    
+    set.seed(seed_value)
+    
+    lda.classifier <- train(X_train_cor, y_train, method = "lda", preProc = c("center","scale"), metric = "Accuracy", trControl = ctrl)
+    
+    lda <- analysis(lda.classifier, X_test_cor, y_test)
+
+    \# Partial Least Squares Discriminant Analysis
+    
+    set.seed(seed_value)
+    
+    plsda.classifier <- train(X_train, y_train, method = "pls", tuneGrid = expand.grid(.ncomp=1:10), 
+    
+                             preProc = c("center","scale"), metric = "Accuracy", trControl = ctrl)
+    
+    plsda <- analysis(plsda.classifier, X_test, y_test)
+    
+    \# Penalized Methods
+
+    glmnGrid <- expand.grid(.alpha = c(0, .1, .2, .4, .6), .lambda = seq(.01, .2, length = 10))
+
+    set.seed(seed_value)
+
+    glmnet.classifier <- train(X_train, y_train, method = "glmnet", tuneGrid = glmnGrid, preProc = c("center","scale"), 
+
+                               metric = "Accuracy", trControl = ctrl)
+
+    glmnet <- analysis(glmnet.classifier, X_test, y_test)
+    
+    \# Nearest shrunken Centroids:
+    
+    nscGrid <- data.frame(.threshold = seq(0,4, by=0.2))
+    
+    set.seed(seed_value)
+    
+    nsc.classifier <- train(X_train, y_train, method = "pam", tuneGrid = nscGrid, preProc = c("center","scale"), metric = "Accuracy",
+    
+                            trControl = ctrl)
+    
+    nsc <- analysis(nsc.classifier, X_test, y_test)
+
+    result <- list(glm = glm, lda = lda, plsda = plsda, glmnet = glmnet, nsc = nsc )
+    
+    return (result)
+
+}
+
+\# Check the file exists and load to variables
+\# else bulid and store the model
+
+if(file.exists("bio_results.rds")) {
+
+    bio_results <- readRDS("bio_results.rds")
+
+} else {
+
+    bio_results <- build_models(bio_train, injury_train, bio_test, injury_test)
+
+    saveRDS(bio_results, "bio_results.rds")
+
+}
+
+### Logistic Regression
+
+bio_results\$glm\$classifier
+
+plot(bio_results\$glm\$classifier)
+
+print(paste("Test set Accuracy: ", round(bio_results\$glm\$acc, 4)))
+
+### Linear Discriminant Analysis
+
+bio_results\$lda\$classifier
+
+print(paste("Test set Accuracy: ", round(bio_results\$lda\$acc, 4)))
+
+### Partial Least Squares Discriminant Analysis
+
+bio_results\$plsda\$classifier
+
+plot(bio_results\$plsda\$classifier)
+
+print(paste("Test set Accuracy: ", round(bio_results\$plsda\$acc, 4)))
+
+### Penalized Methods
+
+bio_results\$glmnet\$classifier
+
+plot(bio_results\$glmnet\$classifier)
+
+print(paste("Test set Accuracy: ", round(bio_results\$glmnet\$acc, 4)))
+
+### Nearest shrunken Centroids
+
+bio_results\$nsc\$classifier
+
+plot(bio_results\$nsc\$classifier)
+
+print(paste("Test set Accuracy: ", round(bio_results\$nsc\$acc, 4)))
+
+### Chemical Predcitor
+
+\# Check the file exists and load to variables
+\# else bulid and store the model
+
+if(file.exists("chem_results.rds")) {
+
+    chem_results <- readRDS("chem_results.rds")
+
+} else {
+
+    chem_results <- build_models(chem_train, injury_train, chem_test, injury_test)
+
+    saveRDS(chem_results, "chem_results.rds")
+
+}
+
+### Logistic Regression
+
+chem_results\$glm\$classifier
+
+plot(chem_results\$glm\$classifier)
+
+print(paste("Test set Accuracy: ", round(chem_results\$glm\$acc, 4)))
+
+### Linear Discriminant Analysis
+
+chem_results\$lda\$classifier
+
+print(paste("Test set Accuracy: ", round(chem_results\$lda\$acc, 4)))
+
+### Partial Least Squares Discriminant Analysis
+
+chem_results\$plsda\$classifier
+
+plot(chem_results\$plsda\$classifier)
+
+print(paste("Test set Accuracy: ", round(chem_results\$plsda\$acc, 4)))
+
+### Penalized Methods
+
+chem_results\$glmnet\$classifier
+
+plot(chem_results\$glmnet\$classifier)
+
+print(paste("Test set Accuracy: ", round(chem_results\$glmnet\$acc, 4)))
+
+### Nearest shrunken Centroids
+
+chem_results\$nsc\$classifier
+
+plot(chem_results\$nsc\$classifier)
+
+print(paste("Test set Accuracy: ", round(chem_results\$nsc\$acc, 4)))
+
+### Section (d)
+
+
+\# Biological Predictors
+
+bio_imp <- varImp(bio_results\$lda\$classifier, scale = FALSE, top = 5)
+
+plot(bio_imp, top = 5, main = "LDA - Biological Predictors")
+
+\# Chemical Predictors
+
+chem_imp <- varImp(chem_results\$lda\$classifier)
+
+plot(chem_imp, top = 5, main = "PLSDA - Chemical Predictors")
+
+## Section (e)
+
+### Combined Predictors
+
+\# Check the file exists and load to variables
+
+\# else bulid and store the model
+
+if(file.exists("bio_chem_results.rds")) {
+
+    bio_chem_results <- readRDS("bio_chem_results.rds")
+
+} else {
+
+    bio_chem_results <- build_models(bio_chem_train, injury_train, bio_chem_test, injury_test)
+
+    saveRDS(bio_chem_results, "bio_chem_results.rds")
+
+}
+
+### Logistic Regression
+
+bio_chem_results\$glm\$classifier
+
+plot(bio_chem_results\$glm\$classifier)
+
+print(paste("Test set Accuracy: ", round(bio_chem_results\$glm\$acc, 4)))
+
+### Linear Discriminant Analysis
+
+bio_chem_results\$lda\$classifier
+
+print(paste("Test set Accuracy: ", round(bio_chem_results\$lda\$acc, 4)))
+
+### Partial Least Squares Discriminant Analysis
+
+bio_chem_results\$plsda\$classifier
+
+plot(bio_chem_results\$plsda\$classifier)
+
+print(paste("Test set Accuracy: ", round(bio_chem_results\$plsda\$acc, 4)))
+
+### Penalized Methods
+
+bio_chem_results\$glmnet\$classifier
+
+plot(bio_chem_results\$glmnet\$classifier)
+
+print(paste("Test set Accuracy: ", round(bio_chem_results\$glmnet\$acc, 4)))
+
+### Nearest shrunken Centroids
+
+bio_chem_results\$nsc\$classifier
+
+plot(bio_chem_results\$nsc\$classifier)
+
+print(paste("Test set Accuracy: ", round(bio_chem_results\$nsc\$acc, 4)))
+
+### Important Predictors
+
+bio_chem_imp <- varImp(bio_chem_results\$nsc\$classifier)
+
+plot(bio_chem_imp, top = 5, main = "Logistic Regression - Combined Predictors")
+
+## Question 2
+
+data(oil)
+
+head(fattyAcids)
+
+head(oilType)
+
+### Section (a)
+
+table(oilType)
+
+barchart(oilType, main = "Oil type distribution", col = "gray")
+
+nzv <- nearZeroVar(fattyAcids)
+
+print(sprintf("Biological : Reducing the %d zero variance columns from %d predcitors (fraction =%10.6f)", length(nzv), dim(fattyAcids)[2],
+
+              length(nzv)/dim(fattyAcids)[2]))
+
+\# Custom accuracy analysis function
+
+analysis_acc <- function(classifier, X, y) {
+
+    \# Make the predictions
+
+    pred <- predict(classifier, X)
+
+    \# Compute the confusion matrix
+
+    cm <- caret::confusionMatrix(data = pred, reference = y)
+
+    acc <- cm\$overall[1]
+
+    return (list(classifier = classifier, confusionMatrix = cm, accuracy = acc))
+
+}
+
+\# Custome models build model with accuracy
+
+build_linear_models <- function(X, y, seed_value = 1){
+
+    \# Removing the highly correlated predictors out for
+    
+    \# logistic and LDA models
+    
+    too_high <- findCorrelation(cor(X), 0.9)
+    
+    X_cor <- as.data.frame(X[, -too_high])
+
+    \# Logistic Regression Model:
+    
+    set.seed(seed_value)
+    
+    glm.classifier <- train(X_cor, y, method = "multinom", preProcess = c("center", "scale"))
+    
+    glm <- analysis_acc(glm.classifier, X, y)
+    
+    \# Linear Discriminant Analysis:
+    
+    set.seed(seed_value)
+    
+    lda.classifier <- train(X_cor, y, method = "lda", preProc = c("center", "scale"))
+    
+    lda <- analysis_acc(lda.classifier, X, y)
+
+    \# Partial Least Squares Discriminant Analysis
+    
+    set.seed(seed_value)
+    
+    plsda.classifier <- train(X, y, method = "pls", tuneGrid = expand.grid(.ncomp=1:6), preProc = c("center","scale"))
+    
+    plsda <- analysis_acc(plsda.classifier, X, y)
+    
+    \# Penalized Methods:
+    
+    glmnGrid <- expand.grid(.alpha = c(0, .1, .2, .4, .6), .lambda = seq(.01, .2, length = 10))
+    
+    set.seed(seed_value)
+    
+    glmnet.classifier <- train(X, y, method = "glmnet", tuneGrid = glmnGrid, preProc = c("center", "scale"))
+    
+    glmnet <- analysis_acc(glmnet.classifier, X, y)
+
+    \# Nearest Shrunken Centroids:
+    
+    nscGrid <- data.frame(.threshold = seq(0,4, by=0.2))
+    
+    set.seed(seed_value)
+    
+    nsc.classifier <- train(X, y, method = "pam", tuneGrid = nscGrid, preProc = c("center", "scale"))
+    
+    nsc <- analysis_acc(nsc.classifier, X, y)
+
+    return (list(glm = glm, plsda = plsda, lda=lda, glmnet=glmnet, nsc=nsc))
+
+}
+
+\# Check the file exists and load to variables
+
+\# else bulid and store the model
+
+if(file.exists("fatty_results.rds")) {
+
+    fatty_results <- readRDS("fatty_results.rds")
+
+} else {
+
+    fatty_results <- build_linear_models(fattyAcids, oilType)
+
+    saveRDS(fatty_results, "fatty_results.rds")
+
+}
+
+### Logistic Regression
+
+fatty_results\$glm\$classifier
+
+fatty_results\$glm\$confusionMatrix
+
+print(paste("Accuracy on the whole training set: ", round(fatty_results\$glm\$accuracy, 4)))
+
+### Linear Discriminant Analysis
+
+fatty_results\$lda\$classifier
+
+fatty_results\$lda\$confusionMatrix
+
+print(paste("Accuracy on the whole training set: ", round(fatty_results\$lda\$accuracy, 4)))
+
+### Partial Least Squares Discriminant Analysis
+
+fatty_results\$plsda\$classifier
+
+plot(fatty_results\$plsda\$classifier)
+
+fatty_results\$plsda\$confusionMatrix
+
+print(paste("Accuracy on the whole training set: ", round(fatty_results\$plsda\$accuracy, 4)))
+
+### Penalized Methods
+
+fatty_results\$glmnet\$classifier
+
+plot(fatty_results\$glmnet\$classifier)
+
+fatty_results\$glmnet\$confusionMatrix
+
+print(paste("Accuracy on the whole training set: ", round(fatty_results\$glmnet\$accuracy, 4)))
+
+### Nearest shrunken Centroids
+
+fatty_results\$nsc\$classifier
+
+plot(fatty_results\$nsc\$classifier)
+
+fatty_results\$nsc\$confusionMatrix
+
+print(paste("Accuracy on the whole training set: ", round(fatty_results\$nsc\$accuracy, 4)))
+
+fatty_results\$glm\$confusionMatrix\$table
+
+#### End of the Assignemnt
